@@ -1,8 +1,13 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/host_model.dart';
+import '../models/host_secret_model.dart';
 import '../providers/host_provider.dart';
 import '../services/ssh_service.dart';
 import 'widgets/reveal_on_mount.dart';
@@ -18,12 +23,21 @@ class AddEditHostScreen extends StatefulWidget {
 }
 
 class _AddEditHostScreenState extends State<AddEditHostScreen> {
+  static const List<String> _commonAwsUsernames = [
+    'ubuntu',
+    'ec2-user',
+    'admin',
+    'root',
+  ];
+
   final _formKey = GlobalKey<FormState>();
-  late TextEditingController _nameController;
   late TextEditingController _hostController;
   late TextEditingController _portController;
   late TextEditingController _usernameController;
   late TextEditingController _passwordController;
+  late TextEditingController _privateKeyController;
+  late TextEditingController _passphraseController;
+  late AuthType _selectedAuthType;
 
   bool _isSaving = false;
 
@@ -32,22 +46,27 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.host?.name ?? '');
     _hostController = TextEditingController(text: widget.host?.host ?? '');
-    _portController =
-        TextEditingController(text: widget.host?.port.toString() ?? '22');
-    _usernameController =
-        TextEditingController(text: widget.host?.username ?? '');
+    _portController = TextEditingController(
+      text: widget.host?.port.toString() ?? '22',
+    );
+    _usernameController = TextEditingController(
+      text: widget.host?.username ?? '',
+    );
     _passwordController = TextEditingController();
+    _privateKeyController = TextEditingController();
+    _passphraseController = TextEditingController();
+    _selectedAuthType = widget.host?.authType ?? AuthType.password;
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
     _hostController.dispose();
     _portController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
+    _privateKeyController.dispose();
+    _passphraseController.dispose();
     super.dispose();
   }
 
@@ -55,19 +74,24 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
     if (_isSaving || !_formKey.currentState!.validate()) return;
 
     setState(() => _isSaving = true);
-    final provider = Provider.of<HostProvider>(context, listen: false);
+    final hostProvider = Provider.of<HostProvider>(context, listen: false);
     final sshService = Provider.of<SSHService>(context, listen: false);
 
-    final name = _nameController.text.trim();
     final hostAddr = _hostController.text.trim();
-    final port = int.tryParse(_portController.text) ?? 22;
+    final port = int.tryParse(_portController.text.trim()) ?? 22;
     final username = _usernameController.text.trim();
-    String password = _passwordController.text;
 
     try {
-      if (_isEditing && password.isEmpty) {
-        final existingPass = await provider.getPassword(widget.host!.id);
-        password = existingPass ?? '';
+      final existingSecrets = _isEditing
+          ? await hostProvider.getSecrets(widget.host!)
+          : null;
+
+      final resolved = _resolveSecrets(
+        sshService: sshService,
+        existingSecrets: existingSecrets,
+      );
+      if (resolved == null) {
+        return;
       }
 
       if (mounted) {
@@ -77,8 +101,8 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
             SnackBar(
               content: Text(
                 _isEditing
-                    ? 'Verifying updated connection...'
-                    : 'Validating new environment...',
+                    ? 'Verifying updated SSH configuration...'
+                    : 'Validating SSH configuration...',
               ),
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(
@@ -88,53 +112,42 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
           );
       }
 
-      final isValid = await sshService.testConnection(
+      final validation = await sshService.testConnection(
         host: hostAddr,
         port: port,
         username: username,
-        password: password,
+        authType: _selectedAuthType,
+        password: resolved.activeSecrets.password,
+        privateKey: resolved.activeSecrets.privateKey,
+        passphrase: resolved.activeSecrets.passphrase,
       );
 
-      if (!isValid) {
-        if (mounted) {
-          setState(() => _isSaving = false);
-          ScaffoldMessenger.of(context)
-            ..hideCurrentSnackBar()
-            ..showSnackBar(
-              SnackBar(
-                content: const Text(
-                  'Connection failed. Check host, username, port, and password.',
-                ),
-                backgroundColor: Colors.red,
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
-            );
-        }
+      if (!validation.isValid) {
+        _showError(validation.message ?? 'SSH validation failed.');
         return;
       }
 
       if (!_isEditing) {
         final newHost = HostModel(
           id: const Uuid().v4(),
-          name: name,
           host: hostAddr,
           port: port,
           username: username,
+          authType: _selectedAuthType,
         );
-        await provider.addHost(newHost, _passwordController.text);
+        await hostProvider.addHost(newHost, resolved.secretsToPersist);
       } else {
         final updatedHost = widget.host!.copyWith(
-          name: name,
           host: hostAddr,
           port: port,
           username: username,
+          authType: _selectedAuthType,
         );
-        await provider.updateHost(
+        await hostProvider.updateHost(
           updatedHost,
-          _passwordController.text.isEmpty ? null : _passwordController.text,
+          secrets: resolved.shouldPersistSecrets
+              ? resolved.secretsToPersist
+              : null,
         );
       }
 
@@ -145,8 +158,8 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
             SnackBar(
               content: Text(
                 _isEditing
-                    ? 'Environment updated successfully.'
-                    : 'Environment created successfully.',
+                    ? 'Host updated successfully.'
+                    : 'Host created successfully.',
               ),
               backgroundColor: Colors.green[600],
               behavior: SnackBarBehavior.floating,
@@ -158,18 +171,161 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
         Navigator.pop(context);
       }
     } catch (e) {
+      _showError('Unable to save host. $e');
+    } finally {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
+        setState(() => _isSaving = false);
+      }
+    }
+  }
+
+  _ResolvedSecrets? _resolveSecrets({
+    required SSHService sshService,
+    HostSecretModel? existingSecrets,
+  }) {
+    final password = _passwordController.text;
+    final privateKey = _privateKeyController.text.trim();
+    final passphrase = _passphraseController.text;
+    final authTypeChanged =
+        _isEditing && widget.host!.authType != _selectedAuthType;
+
+    if (_selectedAuthType == AuthType.password) {
+      if (password.isNotEmpty) {
+        final secrets = HostSecretModel(
+          authType: AuthType.password,
+          password: password,
+        );
+        return _ResolvedSecrets(
+          activeSecrets: secrets,
+          secretsToPersist: secrets,
+          shouldPersistSecrets: true,
         );
       }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
+
+      if (!authTypeChanged &&
+          existingSecrets != null &&
+          existingSecrets.authType == AuthType.password &&
+          existingSecrets.hasPassword) {
+        return _ResolvedSecrets(
+          activeSecrets: existingSecrets,
+          secretsToPersist: existingSecrets,
+          shouldPersistSecrets: false,
+        );
+      }
+
+      _showError(
+        'Password is required. Credentials are stored securely on your device and are not synced. Please re-enter them after reinstall.',
+      );
+      return null;
     }
+
+    if (_passphraseController.text.isNotEmpty && privateKey.isEmpty) {
+      _showError('Paste the private key again when updating its passphrase.');
+      return null;
+    }
+
+    if (privateKey.isNotEmpty) {
+      final privateKeyError = sshService.validatePrivateKey(
+        privateKey: privateKey,
+        passphrase: passphrase,
+        requirePassphraseIfEncrypted: true,
+      );
+      if (privateKeyError != null) {
+        _showError(privateKeyError);
+        return null;
+      }
+
+      final secrets = HostSecretModel(
+        authType: AuthType.privateKey,
+        privateKey: privateKey,
+        passphrase: passphrase,
+      );
+      return _ResolvedSecrets(
+        activeSecrets: secrets,
+        secretsToPersist: secrets,
+        shouldPersistSecrets: true,
+      );
+    }
+
+    if (!authTypeChanged &&
+        existingSecrets != null &&
+        existingSecrets.authType == AuthType.privateKey &&
+        existingSecrets.hasPrivateKey) {
+      return _ResolvedSecrets(
+        activeSecrets: existingSecrets,
+        secretsToPersist: existingSecrets,
+        shouldPersistSecrets: false,
+      );
+    }
+
+    _showError(
+      'Private key is required. Credentials are stored securely on your device and are not synced. Please re-enter them after reinstall.',
+    );
+    return null;
+  }
+
+  Future<void> _pastePrivateKey() async {
+    final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+    final value = clipboardData?.text?.trim();
+    if (value == null || value.isEmpty) {
+      _showError('Clipboard does not contain a private key.');
+      return;
+    }
+
+    setState(() {
+      _privateKeyController.text = value;
+    });
+  }
+
+  Future<void> _pickPrivateKeyFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['pem', 'key', 'rsa', 'ppk'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) {
+      return;
+    }
+
+    final pickedFile = result.files.single;
+    final content = pickedFile.bytes != null
+        ? String.fromCharCodes(pickedFile.bytes!)
+        : pickedFile.path != null
+        ? await File(pickedFile.path!).readAsString()
+        : '';
+    final normalized = content.trim();
+
+    if (normalized.isEmpty) {
+      _showError('The selected file does not contain a private key.');
+      return;
+    }
+
+    setState(() {
+      _privateKeyController.text = normalized;
+    });
+  }
+
+  void _selectUsername(String username) {
+    setState(() {
+      _usernameController.text = username;
+    });
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+      );
   }
 
   @override
@@ -181,7 +337,7 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        title: Text(_isEditing ? 'Edit Environment' : 'Create Environment'),
+        title: Text(_isEditing ? 'Edit Host' : 'Add Host'),
       ),
       body: DecoratedBox(
         decoration: BoxDecoration(
@@ -213,9 +369,7 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      RevealOnMount(
-                        child: _EditorHero(isEditing: _isEditing),
-                      ),
+                      RevealOnMount(child: _EditorHero(isEditing: _isEditing)),
                       const SizedBox(height: 18),
                       RevealOnMount(
                         delay: const Duration(milliseconds: 100),
@@ -223,18 +377,10 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _buildSectionTitle('IDENTITY'),
-                              _buildTextField(
-                                controller: _nameController,
-                                label: 'Environment Name',
-                                hint: 'Production API',
-                                icon: Icons.grid_view_rounded,
-                              ),
-                              const SizedBox(height: 24),
-                              _buildSectionTitle('NETWORK'),
+                              _buildSectionTitle('CONNECTION'),
                               _buildTextField(
                                 controller: _hostController,
-                                label: 'Host or IP',
+                                label: 'Host',
                                 hint: '203.0.113.10 or server.example.com',
                                 icon: Icons.language_rounded,
                               ),
@@ -263,18 +409,137 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
                                   ),
                                 ],
                               ),
+                              if (_selectedAuthType == AuthType.privateKey) ...[
+                                const SizedBox(height: 12),
+                                Container(
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.primary.withValues(
+                                      alpha: 0.06,
+                                    ),
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Common EC2 usernames',
+                                        style: theme.textTheme.labelLarge,
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'AWS Linux images usually use `ubuntu`, `ec2-user`, or `admin`. Wrong username is one of the most common SSH key login failures.',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              color: theme.colorScheme.onSurface
+                                                  .withValues(alpha: 0.68),
+                                              height: 1.4,
+                                            ),
+                                      ),
+                                      const SizedBox(height: 10),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: _commonAwsUsernames
+                                            .map(
+                                              (username) => ActionChip(
+                                                label: Text(username),
+                                                onPressed: _isSaving
+                                                    ? null
+                                                    : () => _selectUsername(
+                                                        username,
+                                                      ),
+                                              ),
+                                            )
+                                            .toList(),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                               const SizedBox(height: 24),
                               _buildSectionTitle('AUTHENTICATION'),
-                              _buildTextField(
-                                controller: _passwordController,
-                                label: _isEditing ? 'New Password' : 'Password',
-                                hint: _isEditing
-                                    ? 'Leave empty to keep current password'
-                                    : 'Required for validation',
-                                icon: Icons.lock_outline_rounded,
-                                obscureText: true,
-                                required: !_isEditing,
+                              _AuthTypeSelector(
+                                value: _selectedAuthType,
+                                enabled: !_isSaving,
+                                onChanged: (value) {
+                                  setState(() {
+                                    _selectedAuthType = value;
+                                  });
+                                },
                               ),
+                              const SizedBox(height: 18),
+                              if (_selectedAuthType == AuthType.password) ...[
+                                _buildTextField(
+                                  controller: _passwordController,
+                                  label: _isEditing
+                                      ? 'New Password'
+                                      : 'Password',
+                                  hint: _isEditing
+                                      ? 'Leave empty to keep the current on-device password'
+                                      : 'Stored only on this device',
+                                  icon: Icons.lock_outline_rounded,
+                                  obscureText: true,
+                                  requiredField: !_isEditing,
+                                ),
+                              ] else ...[
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        'Paste your PEM private key below. It stays only in secure device storage.',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              color: theme.colorScheme.onSurface
+                                                  .withValues(alpha: 0.66),
+                                              height: 1.45,
+                                            ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    OutlinedButton.icon(
+                                      onPressed: _isSaving
+                                          ? null
+                                          : _pickPrivateKeyFile,
+                                      icon: const Icon(
+                                        Icons.upload_file_rounded,
+                                      ),
+                                      label: const Text('Import'),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    OutlinedButton.icon(
+                                      onPressed: _isSaving
+                                          ? null
+                                          : _pastePrivateKey,
+                                      icon: const Icon(
+                                        Icons.content_paste_rounded,
+                                      ),
+                                      label: const Text('Paste Key'),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                _buildTextField(
+                                  controller: _privateKeyController,
+                                  label: _isEditing
+                                      ? 'Private Key (Paste to Replace)'
+                                      : 'Private Key',
+                                  hint: '-----BEGIN RSA PRIVATE KEY-----',
+                                  icon: Icons.key_rounded,
+                                  maxLines: 8,
+                                  requiredField: !_isEditing,
+                                ),
+                                const SizedBox(height: 16),
+                                _buildTextField(
+                                  controller: _passphraseController,
+                                  label: 'Passphrase (Optional)',
+                                  hint: 'Required only for encrypted keys',
+                                  icon: Icons.password_rounded,
+                                  obscureText: true,
+                                  requiredField: false,
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -288,13 +553,49 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
                               : Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(
-                                      'Before saving, the app validates the SSH connection so broken environments never land in your workspace.',
-                                      style: theme.textTheme.bodyMedium?.copyWith(
-                                        color: theme.colorScheme.onSurface
-                                            .withValues(alpha: 0.66),
-                                        height: 1.5,
+                                    Container(
+                                      padding: const EdgeInsets.all(16),
+                                      decoration: BoxDecoration(
+                                        color: theme.colorScheme.secondary
+                                            .withValues(alpha: 0.08),
+                                        borderRadius: BorderRadius.circular(20),
                                       ),
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Icon(
+                                            Icons.verified_user_outlined,
+                                            color: theme.colorScheme.secondary,
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Text(
+                                              'Credentials are stored securely on your device and are not synced. Please re-enter them after reinstall.',
+                                              style: theme.textTheme.bodyMedium
+                                                  ?.copyWith(
+                                                    color: theme
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withValues(
+                                                          alpha: 0.72,
+                                                        ),
+                                                    height: 1.45,
+                                                  ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(height: 18),
+                                    Text(
+                                      'This host is validated before saving so wrong usernames, malformed PEM keys, missing authorized_keys entries, bad passphrases, and unreachable servers fail fast.',
+                                      style: theme.textTheme.bodyMedium
+                                          ?.copyWith(
+                                            color: theme.colorScheme.onSurface
+                                                .withValues(alpha: 0.66),
+                                            height: 1.5,
+                                          ),
                                     ),
                                     const SizedBox(height: 18),
                                     SizedBox(
@@ -337,25 +638,95 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
     required IconData icon,
     bool obscureText = false,
     TextInputType keyboardType = TextInputType.text,
-    bool required = true,
+    bool requiredField = true,
+    int maxLines = 1,
   }) {
     return TextFormField(
       controller: controller,
       obscureText: obscureText,
       keyboardType: keyboardType,
       enabled: !_isSaving,
+      minLines: maxLines == 1 ? 1 : maxLines,
+      maxLines: obscureText ? 1 : maxLines,
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
         prefixIcon: Icon(icon, size: 20),
         floatingLabelBehavior: FloatingLabelBehavior.always,
       ),
-      validator: (v) {
-        if (required && (v == null || v.trim().isEmpty)) {
+      validator: (value) {
+        if (!requiredField) {
+          return null;
+        }
+        if (value == null || value.trim().isEmpty) {
           return 'This field is required';
         }
         return null;
       },
+    );
+  }
+}
+
+class _ResolvedSecrets {
+  final HostSecretModel activeSecrets;
+  final HostSecretModel secretsToPersist;
+  final bool shouldPersistSecrets;
+
+  const _ResolvedSecrets({
+    required this.activeSecrets,
+    required this.secretsToPersist,
+    required this.shouldPersistSecrets,
+  });
+}
+
+class _AuthTypeSelector extends StatelessWidget {
+  final AuthType value;
+  final bool enabled;
+  final ValueChanged<AuthType> onChanged;
+
+  const _AuthTypeSelector({
+    required this.value,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SegmentedButton<AuthType>(
+          segments: AuthType.values
+              .map(
+                (type) => ButtonSegment<AuthType>(
+                  value: type,
+                  icon: Icon(
+                    type == AuthType.password
+                        ? Icons.lock_outline_rounded
+                        : Icons.key_rounded,
+                  ),
+                  label: Text(type.label),
+                ),
+              )
+              .toList(),
+          selected: {value},
+          onSelectionChanged: enabled
+              ? (selection) => onChanged(selection.first)
+              : null,
+          showSelectedIcon: false,
+        ),
+        const SizedBox(height: 12),
+        Text(
+          value == AuthType.password
+              ? 'Authenticate with an SSH password.'
+              : 'Authenticate with a PEM private key and optional passphrase.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.66),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -403,14 +774,12 @@ class _EditorHero extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  isEditing ? 'Refine environment access' : 'Add a new environment',
+                  isEditing ? 'Refine SSH access' : 'Add a new SSH host',
                   style: theme.textTheme.headlineSmall,
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  isEditing
-                      ? 'Update connection details without losing the structure of your workspace.'
-                      : 'Create a polished, validated SSH target before it reaches your main workspace.',
+                  'Host metadata syncs across devices, but passwords and private keys stay only in secure device storage.',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurface.withValues(alpha: 0.66),
                     height: 1.45,
@@ -456,15 +825,9 @@ class _AddEditHostSkeleton extends StatelessWidget {
       children: [
         SkeletonBox(height: 14, width: 220),
         SizedBox(height: 18),
-        SkeletonBox(height: 56),
+        SkeletonBox(height: 72),
         SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(child: SkeletonBox(height: 56)),
-            SizedBox(width: 16),
-            Expanded(child: SkeletonBox(height: 56)),
-          ],
-        ),
+        SkeletonBox(height: 56),
         SizedBox(height: 16),
         SkeletonBox(height: 56),
         SizedBox(height: 22),

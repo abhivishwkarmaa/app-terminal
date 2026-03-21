@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../providers/app_mode_provider.dart';
 import '../providers/auth_provider.dart';
 import 'widgets/reveal_on_mount.dart';
 
@@ -14,28 +15,44 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen>
     with SingleTickerProviderStateMixin {
   bool _isLoading = false;
+  AppMode? _selectedMode;
   late final AnimationController _glowController = AnimationController(
     vsync: this,
     duration: const Duration(seconds: 4),
   )..repeat(reverse: true);
 
-  Future<void> _handleLogin() async {
-    setState(() => _isLoading = true);
-    final success =
-        await Provider.of<AuthProvider>(context, listen: false).login();
-    if (mounted) {
-      setState(() => _isLoading = false);
-    }
+  Future<void> _handleContinue() async {
+    if (_selectedMode == null || _isLoading) return;
 
-    if (!success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Login failed. Please try again.'),
-          backgroundColor: Colors.redAccent,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        ),
-      );
+    setState(() => _isLoading = true);
+    final appMode = Provider.of<AppModeProvider>(context, listen: false);
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+
+    try {
+      if (_selectedMode == AppMode.offline) {
+        await appMode.selectMode(AppMode.offline);
+        return;
+      }
+
+      final success = await auth.login();
+      if (success) {
+        await appMode.selectMode(AppMode.sync);
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Cloud sign-in failed. Please try again.'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -91,147 +108,62 @@ class _LoginScreenState extends State<LoginScreen>
               SafeArea(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
-                    final wide = constraints.maxWidth > 640;
-                    final compact = constraints.maxWidth < 420;
-                    final horizontal = wide ? 48.0 : 24.0;
-
                     return SingleChildScrollView(
-                      padding: EdgeInsets.fromLTRB(horizontal, 24, horizontal, 24),
+                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
                       child: ConstrainedBox(
                         constraints: BoxConstraints(
                           minHeight: constraints.maxHeight - 48,
                         ),
                         child: Center(
                           child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 560),
+                            constraints: const BoxConstraints(maxWidth: 620),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 RevealOnMount(
-                                  beginOffset: const Offset(0, 18),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 8,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: primary.withValues(alpha: 0.1),
-                                          borderRadius: BorderRadius.circular(999),
-                                          border: Border.all(
-                                            color: primary.withValues(alpha: 0.18),
-                                          ),
-                                        ),
-                                        child: Text(
-                                          'SECURE REMOTE WORKSPACE',
-                                          style: theme.textTheme.labelMedium?.copyWith(
-                                            color: primary,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
+                                  child: Text(
+                                    'Choose How TermSSH Works',
+                                    style: theme.textTheme.displaySmall,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                RevealOnMount(
+                                  delay: const Duration(milliseconds: 100),
+                                  child: Text(
+                                    'Offline mode never talks to your backend. Sync mode stores only host metadata in your backend and keeps passwords and private keys on-device.',
+                                    style: theme.textTheme.bodyLarge?.copyWith(
+                                      color: theme.colorScheme.onSurface
+                                          .withValues(alpha: 0.72),
+                                      height: 1.5,
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(height: 28),
                                 RevealOnMount(
-                                  delay: const Duration(milliseconds: 120),
-                                  beginOffset: const Offset(0, 24),
-                                  child: compact
-                                      ? Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            _LoginBrandMark(
-                                              primary: primary,
-                                              secondary: secondary,
-                                            ),
-                                            const SizedBox(height: 18),
-                                            Text(
-                                              'TermSSH',
-                                              style: theme.textTheme.displayMedium
-                                                  ?.copyWith(height: 0.98),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Text(
-                                              'Developer-grade SSH access with cloud sync, encrypted credentials, and a calmer control surface.',
-                                              style: theme.textTheme.bodyLarge?.copyWith(
-                                                color: theme.colorScheme.onSurface
-                                                    .withValues(alpha: 0.72),
-                                                height: 1.45,
-                                              ),
-                                            ),
-                                          ],
-                                        )
-                                      : Row(
-                                          crossAxisAlignment: CrossAxisAlignment.center,
-                                          children: [
-                                            _LoginBrandMark(
-                                              primary: primary,
-                                              secondary: secondary,
-                                            ),
-                                            const SizedBox(width: 18),
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    'TermSSH',
-                                                    style: theme.textTheme.displayMedium
-                                                        ?.copyWith(height: 0.98),
-                                                  ),
-                                                  const SizedBox(height: 6),
-                                                  Text(
-                                                    'Developer-grade SSH access with cloud sync, encrypted credentials, and a calmer control surface.',
-                                                    style: theme.textTheme.bodyLarge?.copyWith(
-                                                      color: theme.colorScheme.onSurface
-                                                          .withValues(alpha: 0.72),
-                                                      height: 1.5,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
+                                  delay: const Duration(milliseconds: 180),
+                                  child: _ModeCard(
+                                    mode: AppMode.offline,
+                                    selected: _selectedMode == AppMode.offline,
+                                    onTap: _isLoading
+                                        ? null
+                                        : () => setState(
+                                            () =>
+                                                _selectedMode = AppMode.offline,
+                                          ),
                                   ),
-                                const SizedBox(height: 28),
+                                ),
+                                const SizedBox(height: 16),
                                 RevealOnMount(
-                                  delay: const Duration(milliseconds: 220),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(22),
-                                    decoration: BoxDecoration(
-                                      color: theme.cardColor.withValues(alpha: 0.82),
-                                      borderRadius: BorderRadius.circular(28),
-                                      border: Border.all(
-                                        color: primary.withValues(alpha: 0.12),
-                                      ),
-                                    ),
-                                    child: Column(
-                                      children: [
-                                        _MetricRow(
-                                          icon: Icons.shield_outlined,
-                                          title: 'Encrypted sync',
-                                          subtitle:
-                                              'Access tokens stay short-lived while credentials remain protected.',
-                                        ),
-                                        const SizedBox(height: 16),
-                                        _MetricRow(
-                                          icon: Icons.bolt_rounded,
-                                          title: 'Fast launch',
-                                          subtitle:
-                                              'Open straight into your saved hosts with polished motion and zero clutter.',
-                                        ),
-                                        const SizedBox(height: 16),
-                                        _MetricRow(
-                                          icon: Icons.memory_rounded,
-                                          title: 'Built for ops',
-                                          subtitle:
-                                              'A cleaner visual rhythm for server lists, profiles, and terminal work.',
-                                        ),
-                                      ],
-                                    ),
+                                  delay: const Duration(milliseconds: 260),
+                                  child: _ModeCard(
+                                    mode: AppMode.sync,
+                                    selected: _selectedMode == AppMode.sync,
+                                    onTap: _isLoading
+                                        ? null
+                                        : () => setState(
+                                            () => _selectedMode = AppMode.sync,
+                                          ),
                                   ),
                                 ),
                                 const SizedBox(height: 28),
@@ -240,59 +172,60 @@ class _LoginScreenState extends State<LoginScreen>
                                   child: Container(
                                     padding: const EdgeInsets.all(22),
                                     decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          theme.cardColor.withValues(alpha: 0.9),
-                                          theme.cardColor.withValues(alpha: 0.72),
-                                        ],
+                                      color: theme.cardColor.withValues(
+                                        alpha: 0.84,
                                       ),
                                       borderRadius: BorderRadius.circular(28),
                                       border: Border.all(
-                                        color: Colors.white.withValues(alpha: 0.06),
+                                        color: primary.withValues(alpha: 0.12),
                                       ),
                                     ),
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          'Authenticate once',
+                                          _selectedMode == AppMode.sync
+                                              ? 'Sync mode details'
+                                              : 'Offline mode details',
                                           style: theme.textTheme.titleLarge,
                                         ),
-                                        const SizedBox(height: 8),
+                                        const SizedBox(height: 12),
                                         Text(
-                                          'Use your Google account to unlock the workspace and keep your terminals in sync across devices.',
-                                          style: theme.textTheme.bodyMedium?.copyWith(
-                                            color: theme.colorScheme.onSurface
-                                                .withValues(alpha: 0.68),
-                                            height: 1.5,
-                                          ),
+                                          _selectedMode == AppMode.sync
+                                              ? 'Hosts sync with your backend after sign-in. Passwords, private keys, and passphrases never sync.'
+                                              : 'Hosts and credentials stay on this device only. No backend login, no host sync, and no cloud dependency.',
+                                          style: theme.textTheme.bodyMedium
+                                              ?.copyWith(
+                                                color: theme
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withValues(alpha: 0.68),
+                                                height: 1.5,
+                                              ),
                                         ),
-                                        const SizedBox(height: 20),
+                                        const SizedBox(height: 18),
                                         SizedBox(
                                           width: double.infinity,
                                           child: ElevatedButton(
-                                            onPressed: _isLoading ? null : _handleLogin,
-                                            child: Padding(
-                                              padding: const EdgeInsets.symmetric(
-                                                vertical: 4,
-                                              ),
-                                              child: Row(
-                                                mainAxisAlignment:
-                                                    MainAxisAlignment.center,
-                                                children: [
-                                                  const Icon(
-                                                    Icons.g_mobiledata_rounded,
-                                                    size: 34,
+                                            onPressed: _selectedMode == null
+                                                ? null
+                                                : _handleContinue,
+                                            child: _isLoading
+                                                ? const SizedBox(
+                                                    width: 22,
+                                                    height: 22,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                          strokeWidth: 2.4,
+                                                        ),
+                                                  )
+                                                : Text(
+                                                    _selectedMode ==
+                                                            AppMode.sync
+                                                        ? 'Continue With Sync'
+                                                        : 'Start Offline',
                                                   ),
-                                                  const SizedBox(width: 10),
-                                                  Text(
-                                                    _isLoading
-                                                        ? 'Connecting...'
-                                                        : 'Continue with Google',
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
                                           ),
                                         ),
                                       ],
@@ -311,6 +244,93 @@ class _LoginScreenState extends State<LoginScreen>
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _ModeCard extends StatelessWidget {
+  final AppMode mode;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  const _ModeCard({
+    required this.mode,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(28),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(22),
+          decoration: BoxDecoration(
+            color: theme.cardColor.withValues(alpha: selected ? 0.96 : 0.82),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(
+              color: selected
+                  ? primary.withValues(alpha: 0.44)
+                  : primary.withValues(alpha: 0.12),
+              width: selected ? 1.6 : 1,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  color: primary.withValues(alpha: 0.12),
+                ),
+                child: Icon(
+                  mode == AppMode.offline
+                      ? Icons.phonelink_lock_rounded
+                      : Icons.cloud_sync_rounded,
+                  color: primary,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(mode.label, style: theme.textTheme.titleLarge),
+                    const SizedBox(height: 8),
+                    Text(
+                      mode.description,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.68,
+                        ),
+                        height: 1.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              Icon(
+                selected
+                    ? Icons.radio_button_checked_rounded
+                    : Icons.radio_button_off_rounded,
+                color: selected
+                    ? primary
+                    : theme.colorScheme.onSurface.withValues(alpha: 0.34),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -339,102 +359,6 @@ class _AmbientOrb extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _LoginBrandMark extends StatelessWidget {
-  final Color primary;
-  final Color secondary;
-
-  const _LoginBrandMark({
-    required this.primary,
-    required this.secondary,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 82,
-      height: 82,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: LinearGradient(
-          colors: [
-            primary.withValues(alpha: 0.2),
-            secondary.withValues(alpha: 0.16),
-          ],
-        ),
-        border: Border.all(
-          color: primary.withValues(alpha: 0.22),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: primary.withValues(alpha: 0.16),
-            blurRadius: 30,
-            spreadRadius: 3,
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: Image.asset(
-            'assets/icon.png',
-            fit: BoxFit.cover,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MetricRow extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  const _MetricRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            color: theme.colorScheme.primary.withValues(alpha: 0.1),
-          ),
-          child: Icon(icon, color: theme.colorScheme.primary, size: 20),
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: theme.textTheme.titleMedium),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.66),
-                  height: 1.45,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }

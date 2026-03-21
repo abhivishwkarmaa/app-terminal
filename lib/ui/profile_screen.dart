@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../models/user_model.dart';
+import '../providers/app_mode_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/host_provider.dart';
 import '../providers/theme_provider.dart';
@@ -36,7 +38,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: const TextStyle(fontWeight: FontWeight.bold)),
+        content: Text(
+          message,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
         backgroundColor: isError ? Colors.redAccent : Colors.green[600],
         behavior: SnackBarBehavior.floating,
         margin: const EdgeInsets.all(16),
@@ -72,11 +77,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Future<void> _switchMode(AppMode mode) async {
+    final appMode = Provider.of<AppModeProvider>(context, listen: false);
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+
+    if (appMode.mode == mode) {
+      return;
+    }
+
+    if (mode == AppMode.offline) {
+      await appMode.selectMode(AppMode.offline);
+      if (mounted) {
+        _showFeedback('Switched to offline mode');
+        Navigator.pop(context);
+      }
+      return;
+    }
+
+    final success = await auth.login();
+    if (!success) {
+      if (mounted) {
+        _showFeedback('Failed to connect sync mode.', isError: true);
+      }
+      return;
+    }
+
+    await appMode.selectMode(AppMode.sync);
+    if (mounted) {
+      _showFeedback('Sync mode enabled');
+      Navigator.pop(context);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = Provider.of<AuthProvider>(context);
+    final appMode = Provider.of<AppModeProvider>(context);
     final themeProvider = Provider.of<ThemeProvider>(context);
     final user = auth.user;
+
+    if (user == null && appMode.isOfflineMode) {
+      return _OfflineProfileScreen(
+        currentMode: appMode.mode ?? AppMode.offline,
+        onSwitchMode: _switchMode,
+      );
+    }
 
     if (user == null) {
       return const _ProfileSkeletonScreen();
@@ -95,8 +140,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
               onPressed: () => Navigator.pop(context),
             ),
-            title: const Text('Account Settings', 
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+            title: const Text(
+              'Account Settings',
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+            ),
             centerTitle: true,
           ),
           SliverToBoxAdapter(
@@ -105,13 +152,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: Column(
                 children: [
                   const SizedBox(height: 10),
-                  RevealOnMount(
-                    child: _buildProfileHeader(user),
-                  ),
+                  RevealOnMount(child: _buildProfileHeader(user)),
                   const SizedBox(height: 32),
                   RevealOnMount(
                     delay: const Duration(milliseconds: 120),
                     child: _buildThemeSection(themeProvider),
+                  ),
+                  const SizedBox(height: 32),
+                  RevealOnMount(
+                    delay: const Duration(milliseconds: 180),
+                    child: _ModePanel(
+                      currentMode: appMode.mode ?? AppMode.sync,
+                      onSwitchMode: _switchMode,
+                    ),
                   ),
                   const SizedBox(height: 32),
                   RevealOnMount(
@@ -130,8 +183,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 30),
                     child: Center(
-                      child: Text('No terminals linked yet.', 
-                        style: TextStyle(color: Colors.grey[600], fontSize: 13, fontWeight: FontWeight.w500)),
+                      child: Text(
+                        'No terminals linked yet.',
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
                     ),
                   ),
                 );
@@ -139,43 +198,70 @@ class _ProfileScreenState extends State<ProfileScreen> {
               return SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 sliver: SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final host = hostProvider.hosts[index];
-                      return RevealOnMount(
-                        delay: Duration(milliseconds: 260 + (index * 60)),
-                        child: Card(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(color: Colors.grey.withValues(alpha: 0.1)),
-                          ),
-                          child: ListTile(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (context) => HostDetailScreen(host: host)),
-                              );
-                            },
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                            leading: Container(
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Icon(Icons.dns_rounded, size: 20, color: Theme.of(context).colorScheme.primary),
-                            ),
-                            title: Text(host.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                            subtitle: Text(host.host, style: TextStyle(color: Colors.grey[600], fontSize: 11)),
-                            trailing: const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
+                  delegate: SliverChildBuilderDelegate((context, index) {
+                    final host = hostProvider.hosts[index];
+                    return RevealOnMount(
+                      delay: Duration(milliseconds: 260 + (index * 60)),
+                      child: Card(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(
+                            color: Colors.grey.withValues(alpha: 0.1),
                           ),
                         ),
-                      );
-                    },
-                    childCount: hostProvider.hosts.length,
-                  ),
+                        child: ListTile(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    HostDetailScreen(host: host),
+                              ),
+                            );
+                          },
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 4,
+                          ),
+                          leading: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.primary.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(
+                              Icons.dns_rounded,
+                              size: 20,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                          title: Text(
+                            host.displayName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                          subtitle: Text(
+                            host.host,
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 11,
+                            ),
+                          ),
+                          trailing: const Icon(
+                            Icons.chevron_right,
+                            size: 18,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      ),
+                    );
+                  }, childCount: hostProvider.hosts.length),
                 ),
               );
             },
@@ -197,10 +283,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         _showFeedback('Session ended');
                       },
                       borderRadius: BorderRadius.circular(14),
-                    child: Container(
+                      child: Container(
                         padding: const EdgeInsets.symmetric(vertical: 18),
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.red.withValues(alpha: 0.15)),
+                          border: Border.all(
+                            color: Colors.red.withValues(alpha: 0.15),
+                          ),
                           borderRadius: BorderRadius.circular(14),
                         ),
                         child: const Center(
@@ -218,7 +306,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  Text('TermSSH Sync v1.0.0', style: TextStyle(fontSize: 10, color: Colors.grey[400])),
+                  Text(
+                    'TermSSH Sync v1.0.0',
+                    style: TextStyle(fontSize: 10, color: Colors.grey[400]),
+                  ),
                 ],
               ),
             ),
@@ -238,15 +329,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
               padding: const EdgeInsets.all(3),
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.2), width: 1.5),
+                border: Border.all(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.primary.withValues(alpha: 0.2),
+                  width: 1.5,
+                ),
               ),
               child: CircleAvatar(
                 radius: 50,
-                backgroundColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.05),
-                backgroundImage: user.pictureUrl != null ? NetworkImage(user.pictureUrl!) : null,
-                child: user.pictureUrl == null 
-                  ? Icon(Icons.person_rounded, size: 60, color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.8))
-                  : null,
+                backgroundColor: Theme.of(
+                  context,
+                ).colorScheme.primary.withValues(alpha: 0.05),
+                backgroundImage: user.pictureUrl != null
+                    ? NetworkImage(user.pictureUrl!)
+                    : null,
+                child: user.pictureUrl == null
+                    ? Icon(
+                        Icons.person_rounded,
+                        size: 60,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.8),
+                      )
+                    : null,
               ),
             ),
             GestureDetector(
@@ -256,12 +362,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.primary,
                   shape: BoxShape.circle,
-                  border: Border.all(color: Theme.of(context).scaffoldBackgroundColor, width: 2),
+                  border: Border.all(
+                    color: Theme.of(context).scaffoldBackgroundColor,
+                    width: 2,
+                  ),
                 ),
                 child: Icon(
-                  _isEditing ? Icons.check_rounded : Icons.edit_rounded, 
-                  color: Colors.white, 
-                  size: 16
+                  _isEditing ? Icons.check_rounded : Icons.edit_rounded,
+                  color: Colors.white,
+                  size: 16,
                 ),
               ),
             ),
@@ -280,7 +389,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 counterText: '',
                 contentPadding: EdgeInsets.zero,
                 focusedBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: Theme.of(context).colorScheme.primary, width: 2),
+                  borderSide: BorderSide(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 2,
+                  ),
                 ),
               ),
               onSubmitted: (_) => _saveName(),
@@ -289,10 +401,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           )
         else
-          Text(user.name, 
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: -0.5)),
+          Text(
+            user.name,
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              letterSpacing: -0.5,
+            ),
+          ),
         const SizedBox(height: 4),
-        Text(user.email, style: TextStyle(color: Colors.grey[500], fontSize: 13, fontWeight: FontWeight.w500)),
+        Text(
+          user.email,
+          style: TextStyle(
+            color: Colors.grey[500],
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
       ],
     );
   }
@@ -332,7 +457,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         width: 85,
         margin: const EdgeInsets.only(right: 12),
         decoration: BoxDecoration(
-          color: isSelected ? color.withValues(alpha: 0.08) : Theme.of(context).cardColor,
+          color: isSelected
+              ? color.withValues(alpha: 0.08)
+              : Theme.of(context).cardColor,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isSelected ? color : Colors.grey.withValues(alpha: 0.1),
@@ -371,8 +498,95 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ),
         const SizedBox(width: 8),
-        Expanded(child: Divider(thickness: 1, color: Colors.grey.withValues(alpha: 0.1))),
+        Expanded(
+          child: Divider(
+            thickness: 1,
+            color: Colors.grey.withValues(alpha: 0.1),
+          ),
+        ),
       ],
+    );
+  }
+}
+
+class _OfflineProfileScreen extends StatelessWidget {
+  final AppMode currentMode;
+  final ValueChanged<AppMode> onSwitchMode;
+
+  const _OfflineProfileScreen({
+    required this.currentMode,
+    required this.onSwitchMode,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('App Settings')),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Text(
+            'Offline workspace',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'You are using TermSSH without backend sync. Hosts and credentials stay only on this device.',
+            style: Theme.of(context).textTheme.bodyLarge,
+          ),
+          const SizedBox(height: 24),
+          _ModePanel(currentMode: currentMode, onSwitchMode: onSwitchMode),
+        ],
+      ),
+    );
+  }
+}
+
+class _ModePanel extends StatelessWidget {
+  final AppMode currentMode;
+  final ValueChanged<AppMode> onSwitchMode;
+
+  const _ModePanel({required this.currentMode, required this.onSwitchMode});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor.withValues(alpha: 0.84),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('APP MODE', style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 12),
+          Text(
+            currentMode.label,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 10),
+          Text(currentMode.description),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: AppMode.values
+                .map(
+                  (mode) => ChoiceChip(
+                    label: Text(mode.label),
+                    selected: mode == currentMode,
+                    onSelected: (selected) {
+                      if (selected) {
+                        onSwitchMode(mode);
+                      }
+                    },
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -419,7 +633,8 @@ class _ProfileSkeletonScreen extends StatelessWidget {
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
                       itemCount: 4,
-                      separatorBuilder: (context, index) => const SizedBox(width: 12),
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(width: 12),
                       itemBuilder: (context, index) => const SkeletonBox(
                         width: 86,
                         height: 100,

@@ -26,7 +26,9 @@ class HostDetailScreen extends StatelessWidget {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => AddEditHostScreen(host: host)),
+                MaterialPageRoute(
+                  builder: (context) => AddEditHostScreen(host: host),
+                ),
               );
             },
           ),
@@ -86,6 +88,12 @@ class HostDetailScreen extends StatelessWidget {
                             label: 'Port',
                             value: host.port.toString(),
                           ),
+                          const SizedBox(height: 12),
+                          _DetailRow(
+                            icon: Icons.verified_user_outlined,
+                            label: 'Authentication',
+                            value: host.authType.label,
+                          ),
                         ],
                       ),
                     ),
@@ -101,14 +109,16 @@ class HostDetailScreen extends StatelessWidget {
                           SizedBox(height: 14),
                           _SecurityPill(
                             icon: Icons.lock_outline_rounded,
-                            title: 'Credential sync',
-                            subtitle: 'Encrypted locally before cloud synchronization.',
+                            title: 'Device-only secrets',
+                            subtitle:
+                                'Passwords, private keys, and passphrases stay in secure on-device storage only.',
                           ),
                           SizedBox(height: 12),
                           _SecurityPill(
                             icon: Icons.verified_user_outlined,
-                            title: 'Session launch',
-                            subtitle: 'Credentials are verified before environments are saved.',
+                            title: 'Reinstall behavior',
+                            subtitle:
+                                'Credentials are stored securely on your device and are not synced. Please re-enter them after reinstall.',
                           ),
                         ],
                       ),
@@ -123,7 +133,9 @@ class HostDetailScreen extends StatelessWidget {
                         onPressed: () {
                           Navigator.push(
                             context,
-                            MaterialPageRoute(builder: (context) => TerminalScreen(host: host)),
+                            MaterialPageRoute(
+                              builder: (context) => TerminalScreen(host: host),
+                            ),
                           );
                         },
                         child: const Row(
@@ -186,7 +198,7 @@ class _Header extends StatelessWidget {
             child: Icon(Icons.dns_rounded, size: 40, color: primary),
           ),
           const SizedBox(height: 18),
-          Text(host.name, style: theme.textTheme.headlineSmall),
+          Text(host.displayName, style: theme.textTheme.headlineSmall),
           const SizedBox(height: 8),
           Text(
             '${host.username}@${host.host}',

@@ -1,8 +1,12 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:xterm/xterm.dart';
 import '../models/host_model.dart';
+import '../models/host_secret_model.dart';
 import '../providers/host_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/ssh_service.dart';
@@ -20,10 +24,15 @@ class TerminalScreen extends StatefulWidget {
 class _TerminalScreenState extends State<TerminalScreen> {
   final FocusNode _terminalFocusNode = FocusNode();
   final ScrollController _shortcutPanelScrollController = ScrollController();
+  late HostModel _currentHost;
   static const List<_TerminalShortcut> _quickShortcuts = [
     _TerminalShortcut(label: 'ESC', input: '\x1B'),
     _TerminalShortcut(label: 'TAB', input: '\t'),
-    _TerminalShortcut(label: 'CTRL+C', controlKey: 'C', accent: Colors.redAccent),
+    _TerminalShortcut(
+      label: 'CTRL+C',
+      controlKey: 'C',
+      accent: Colors.redAccent,
+    ),
     _TerminalShortcut(label: 'CTRL+D', controlKey: 'D'),
     _TerminalShortcut(label: 'CTRL+Z', controlKey: 'Z'),
     _TerminalShortcut(label: 'UP', input: '\x1B[A'),
@@ -61,6 +70,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
   @override
   void initState() {
     super.initState();
+    _currentHost = widget.host;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _connect();
     });
@@ -73,79 +83,271 @@ class _TerminalScreenState extends State<TerminalScreen> {
     super.dispose();
   }
 
-  void _connect() async {
+  Future<void> _connect() async {
     final hostProvider = Provider.of<HostProvider>(context, listen: false);
     final sshService = Provider.of<SSHService>(context, listen: false);
-    
-    String? password;
-    try {
-      password = await hostProvider.getPassword(widget.host.id);
-    } catch (e) {
-      // If decryption fails (e.g. key mismatch), we treat it as null to prompt again
-      debugPrint('Decryption error, prompting for password: $e');
-      password = null;
-    }
-    
-    if (password == null) {
-      if (mounted) {
-        password = await _showPasswordPrompt();
-        if (password == null || password.isEmpty) return;
-        
-        // Save it locally for future use on this device
-        await hostProvider.updateHost(widget.host, password);
-      } else {
-        return;
+
+    HostSecretModel? secrets = await hostProvider.getSecrets(_currentHost);
+    var shouldPersistSecrets = false;
+    var shouldPersistMetadata = false;
+
+    if (secrets == null) {
+      if (!mounted) return;
+
+      secrets = await _showCredentialPrompt();
+      if (secrets == null) return;
+      shouldPersistSecrets = true;
+
+      if (secrets.authType != _currentHost.authType) {
+        _currentHost = _currentHost.copyWith(authType: secrets.authType);
+        shouldPersistMetadata = true;
       }
     }
 
+    final validation = await sshService.testConnection(
+      host: _currentHost.host,
+      port: _currentHost.port,
+      username: _currentHost.username,
+      authType: _currentHost.authType,
+      password: secrets.password,
+      privateKey: secrets.privateKey,
+      passphrase: secrets.passphrase,
+    );
+    if (!validation.isValid) {
+      _showError(validation.message ?? 'SSH connection failed.');
+      return;
+    }
+
+    if (shouldPersistMetadata) {
+      await hostProvider.updateHost(_currentHost);
+    }
+
+    if (shouldPersistSecrets) {
+      await hostProvider.saveSecrets(_currentHost, secrets);
+    }
+
     await sshService.connect(
-      host: widget.host.host,
-      port: widget.host.port,
-      username: widget.host.username,
-      password: password,
+      host: _currentHost.host,
+      port: _currentHost.port,
+      username: _currentHost.username,
+      authType: _currentHost.authType,
+      password: secrets.password,
+      privateKey: secrets.privateKey,
+      passphrase: secrets.passphrase,
     );
   }
 
-  Future<String?> _showPasswordPrompt() {
+  Future<HostSecretModel?> _showCredentialPrompt() {
     final passwordController = TextEditingController();
-    return showDialog<String>(
+    final privateKeyController = TextEditingController();
+    final passphraseController = TextEditingController();
+    var selectedAuthType = _currentHost.authType;
+
+    return showDialog<HostSecretModel>(
       context: context,
       barrierDismissible: false,
       builder: (context) {
-        return AlertDialog(
-          title: const Text('Authentication Required', style: TextStyle(fontWeight: FontWeight.bold)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('This terminal was synced from another device. Please enter the SSH password to decrypt and connect.'),
-              const SizedBox(height: 20),
-              TextField(
-                controller: passwordController,
-                obscureText: true,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: 'SSH Password',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.lock_outline),
-                ),
-                onSubmitted: (val) => Navigator.pop(context, val),
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text(
+                'Authentication Required',
+                style: TextStyle(fontWeight: FontWeight.bold),
               ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('CANCEL'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, passwordController.text),
-              child: const Text('CONNECT'),
-            ),
-          ],
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Credentials are stored securely on your device and are not synced. Please re-enter them after reinstall.',
+                    ),
+                    const SizedBox(height: 20),
+                    SegmentedButton<AuthType>(
+                      segments: AuthType.values
+                          .map(
+                            (type) => ButtonSegment<AuthType>(
+                              value: type,
+                              label: Text(type.label),
+                              icon: Icon(
+                                type == AuthType.password
+                                    ? Icons.lock_outline_rounded
+                                    : Icons.key_rounded,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      selected: {selectedAuthType},
+                      onSelectionChanged: (selection) {
+                        setState(() {
+                          selectedAuthType = selection.first;
+                        });
+                      },
+                      showSelectedIcon: false,
+                    ),
+                    const SizedBox(height: 16),
+                    if (selectedAuthType == AuthType.password)
+                      TextField(
+                        controller: passwordController,
+                        obscureText: true,
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                          labelText: 'SSH Password',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.lock_outline),
+                        ),
+                        onSubmitted: (value) {
+                          if (value.isEmpty) return;
+                          Navigator.pop(
+                            context,
+                            HostSecretModel(
+                              authType: AuthType.password,
+                              password: value,
+                            ),
+                          );
+                        },
+                      )
+                    else ...[
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () async {
+                            final clipboard = await Clipboard.getData(
+                              Clipboard.kTextPlain,
+                            );
+                            final value = clipboard?.text?.trim() ?? '';
+                            if (value.isEmpty) return;
+                            setState(() {
+                              privateKeyController.text = value;
+                            });
+                          },
+                          icon: const Icon(Icons.content_paste_rounded),
+                          label: const Text('Paste Key'),
+                        ),
+                      ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () async {
+                            final result = await FilePicker.platform.pickFiles(
+                              type: FileType.custom,
+                              allowedExtensions: const [
+                                'pem',
+                                'key',
+                                'rsa',
+                                'ppk',
+                              ],
+                              withData: true,
+                            );
+                            if (result == null || result.files.isEmpty) return;
+
+                            final pickedFile = result.files.single;
+                            final content = pickedFile.bytes != null
+                                ? String.fromCharCodes(pickedFile.bytes!)
+                                : pickedFile.path != null
+                                ? await File(pickedFile.path!).readAsString()
+                                : '';
+                            if (content.trim().isEmpty) return;
+
+                            setState(() {
+                              privateKeyController.text = content.trim();
+                            });
+                          },
+                          icon: const Icon(Icons.upload_file_rounded),
+                          label: const Text('Import Key'),
+                        ),
+                      ),
+                      TextField(
+                        controller: privateKeyController,
+                        autofocus: true,
+                        minLines: 7,
+                        maxLines: 7,
+                        decoration: const InputDecoration(
+                          labelText: 'Private Key',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.key_rounded),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: passphraseController,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Passphrase (Optional)',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.password_rounded),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('CANCEL'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    if (selectedAuthType == AuthType.password) {
+                      final password = passwordController.text;
+                      if (password.isEmpty) return;
+                      Navigator.pop(
+                        context,
+                        HostSecretModel(
+                          authType: AuthType.password,
+                          password: password,
+                        ),
+                      );
+                      return;
+                    }
+
+                    final privateKey = privateKeyController.text.trim();
+                    final sshService = Provider.of<SSHService>(
+                      context,
+                      listen: false,
+                    );
+                    final privateKeyError = sshService.validatePrivateKey(
+                      privateKey: privateKey,
+                      passphrase: passphraseController.text,
+                      requirePassphraseIfEncrypted: true,
+                    );
+                    if (privateKeyError != null) {
+                      _showError(privateKeyError);
+                      return;
+                    }
+
+                    Navigator.pop(
+                      context,
+                      HostSecretModel(
+                        authType: AuthType.privateKey,
+                        privateKey: privateKey,
+                        passphrase: passphraseController.text,
+                      ),
+                    );
+                  },
+                  child: const Text('CONNECT'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   TerminalTheme _getTerminalTheme(String themeName) {
@@ -269,7 +471,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
             backgroundColor: Colors.transparent,
             titleSpacing: 12,
             title: _TerminalAppBarTitle(
-              hostName: widget.host.name,
+              hostName: widget.host.displayName,
               descriptor: '${widget.host.username}@${widget.host.host}',
             ),
             actions: [
@@ -279,9 +481,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
                     padding: const EdgeInsets.only(right: 12),
                     child: TextButton.icon(
                       style: TextButton.styleFrom(
-                        backgroundColor: Theme.of(context)
-                            .cardColor
-                            .withValues(alpha: 0.78),
+                        backgroundColor: Theme.of(
+                          context,
+                        ).cardColor.withValues(alpha: 0.78),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 14,
                           vertical: 10,
@@ -307,7 +509,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
                         size: 18,
                       ),
                       label: Text(
-                        ssh.status == SSHStatus.connected ? 'Connected' : 'Connect',
+                        ssh.status == SSHStatus.connected
+                            ? 'Connected'
+                            : 'Connect',
                         style: TextStyle(
                           color: ssh.status == SSHStatus.connected
                               ? Colors.redAccent
@@ -329,8 +533,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
                     builder: (context, ssh, theme, child) {
                       if (ssh.status == SSHStatus.connecting) {
                         return _TerminalSkeleton(
-                          hostName: widget.host.name,
-                          descriptor: '${widget.host.username}@${widget.host.host}',
+                          hostName: widget.host.displayName,
+                          descriptor:
+                              '${widget.host.username}@${widget.host.host}',
                         );
                       }
 
@@ -342,9 +547,11 @@ class _TerminalScreenState extends State<TerminalScreen> {
                             // Calculate terminal dimensions (approximate)
                             final charWidth = theme.terminalFontSize * 0.6;
                             final charHeight = theme.terminalFontSize * 1.2;
-                            final cols = (constraints.maxWidth / charWidth).floor();
-                            final rows = (constraints.maxHeight / charHeight).floor();
-                            
+                            final cols = (constraints.maxWidth / charWidth)
+                                .floor();
+                            final rows = (constraints.maxHeight / charHeight)
+                                .floor();
+
                             // Signal resize to SSH session
                             ssh.resize(cols, rows);
 
@@ -354,7 +561,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
                               autofocus: true,
                               backgroundOpacity: 1.0,
                               theme: terminalTheme,
-                              textStyle: TerminalStyle(fontSize: theme.terminalFontSize),
+                              textStyle: TerminalStyle(
+                                fontSize: theme.terminalFontSize,
+                              ),
                             );
                           },
                         ),
@@ -390,7 +599,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
       padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
       decoration: BoxDecoration(
         color: bgColor,
-        border: Border(top: BorderSide(color: isDark ? Colors.white10 : Colors.black12)),
+        border: Border(
+          top: BorderSide(color: isDark ? Colors.white10 : Colors.black12),
+        ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -398,7 +609,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
           Row(
             children: [
               _keyboardIconButton(
-                _isKeyboardExpanded ? Icons.keyboard_arrow_down : Icons.tune_rounded,
+                _isKeyboardExpanded
+                    ? Icons.keyboard_arrow_down
+                    : Icons.tune_rounded,
                 _toggleKeyboard,
                 textColor,
               ),
@@ -427,7 +640,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
               ),
               const SizedBox(width: 4),
               _keyboardIconButton(
-                isKeyboardVisible ? Icons.keyboard_hide_rounded : Icons.keyboard_rounded,
+                isKeyboardVisible
+                    ? Icons.keyboard_hide_rounded
+                    : Icons.keyboard_rounded,
                 () {
                   if (isKeyboardVisible) {
                     SystemChannels.textInput.invokeMethod('TextInput.hide');
@@ -501,22 +716,39 @@ class _TerminalScreenState extends State<TerminalScreen> {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                           children: [
-                            Text('FONT SIZE', style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1,
-                              color: textColor.withValues(alpha: 0.5),
-                            )),
-                            _controlButton(Icons.remove_rounded, themeProvider.decreaseFontSize, textColor, keyColor),
+                            Text(
+                              'FONT SIZE',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1,
+                                color: textColor.withValues(alpha: 0.5),
+                              ),
+                            ),
+                            _controlButton(
+                              Icons.remove_rounded,
+                              themeProvider.decreaseFontSize,
+                              textColor,
+                              keyColor,
+                            ),
                             Container(
                               constraints: const BoxConstraints(minWidth: 40.0),
                               alignment: Alignment.center,
                               child: Text(
                                 '${themeProvider.terminalFontSize.toInt()}',
-                                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: textColor),
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w900,
+                                  color: textColor,
+                                ),
                               ),
                             ),
-                            _controlButton(Icons.add_rounded, themeProvider.increaseFontSize, textColor, keyColor),
+                            _controlButton(
+                              Icons.add_rounded,
+                              themeProvider.increaseFontSize,
+                              textColor,
+                              keyColor,
+                            ),
                           ],
                         ),
                       ),
@@ -555,7 +787,12 @@ class _TerminalScreenState extends State<TerminalScreen> {
     );
   }
 
-  Widget _keyboardIconButton(IconData icon, VoidCallback onTap, Color color, {String? tooltip}) {
+  Widget _keyboardIconButton(
+    IconData icon,
+    VoidCallback onTap,
+    Color color, {
+    String? tooltip,
+  }) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -572,7 +809,12 @@ class _TerminalScreenState extends State<TerminalScreen> {
     );
   }
 
-  Widget _keyButton(String label, VoidCallback onPressed, Color textColor, Color bgColor) {
+  Widget _keyButton(
+    String label,
+    VoidCallback onPressed,
+    Color textColor,
+    Color bgColor,
+  ) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
       child: Material(
@@ -604,7 +846,12 @@ class _TerminalScreenState extends State<TerminalScreen> {
     );
   }
 
-  Widget _controlButton(IconData icon, VoidCallback onPressed, Color textColor, Color bgColor) {
+  Widget _controlButton(
+    IconData icon,
+    VoidCallback onPressed,
+    Color textColor,
+    Color bgColor,
+  ) {
     return Material(
       color: bgColor,
       elevation: 1,
@@ -670,10 +917,7 @@ class _TerminalSkeleton extends StatelessWidget {
   final String hostName;
   final String descriptor;
 
-  const _TerminalSkeleton({
-    required this.hostName,
-    required this.descriptor,
-  });
+  const _TerminalSkeleton({required this.hostName, required this.descriptor});
 
   @override
   Widget build(BuildContext context) {
@@ -689,8 +933,9 @@ class _TerminalSkeleton extends StatelessWidget {
           const reservedHeight = 140.0;
           final availableLineSpace = (constraints.maxHeight - reservedHeight)
               .clamp(120.0, double.infinity);
-          final lineCount =
-              (availableLineSpace / (lineHeight + lineGap)).floor().clamp(8, 24);
+          final lineCount = (availableLineSpace / (lineHeight + lineGap))
+              .floor()
+              .clamp(8, 24);
 
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,

@@ -7,12 +7,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/user_model.dart';
+import '../services/backend_config.dart';
 
 class AuthProvider extends ChangeNotifier {
-  static String get _baseUrl {
-    return 'http://192.142.3.54:8080';
-  }
-  
   final _storage = const FlutterSecureStorage(
     iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
   );
@@ -91,9 +88,9 @@ class AuthProvider extends ChangeNotifier {
 
       if (idToken == null) return false;
 
-      debugPrint('Attempting login at: $_baseUrl/auth/google');
+      debugPrint('Attempting login at: ${BackendConfig.baseUrl}/auth/google');
       final response = await http.post(
-        Uri.parse('$_baseUrl/auth/google'),
+        Uri.parse('${BackendConfig.baseUrl}/auth/google'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'id_token': idToken}),
       );
@@ -182,7 +179,7 @@ class AuthProvider extends ChangeNotifier {
 
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/auth/refresh'),
+        Uri.parse('${BackendConfig.baseUrl}/auth/refresh'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'refresh_token': refreshToken}),
       );
@@ -225,7 +222,7 @@ class AuthProvider extends ChangeNotifier {
 
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/profile'),
+        Uri.parse('${BackendConfig.apiBaseUrl}/profile'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -257,7 +254,7 @@ class AuthProvider extends ChangeNotifier {
 
     try {
       final response = await http.put(
-        Uri.parse('$_baseUrl/api/profile'),
+        Uri.parse('${BackendConfig.apiBaseUrl}/profile'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',

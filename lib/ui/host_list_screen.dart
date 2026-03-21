@@ -24,7 +24,9 @@ class HostListScreen extends StatelessWidget {
         backgroundColor: Colors.transparent,
         title: Text(
           'Workspace',
-          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
         ),
         leadingWidth: 72,
         leading: Padding(
@@ -70,7 +72,10 @@ class HostListScreen extends StatelessWidget {
                 onPressed: () {
                   showSearch(
                     context: context,
-                    delegate: HostSearchDelegate(hostProvider.hosts, hostProvider),
+                    delegate: HostSearchDelegate(
+                      hostProvider.hosts,
+                      hostProvider,
+                    ),
                   );
                 },
               );
@@ -148,7 +153,8 @@ class HostListScreen extends StatelessWidget {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (context) => const AddEditHostScreen(),
+                                    builder: (context) =>
+                                        const AddEditHostScreen(),
                                   ),
                                 );
                               },
@@ -160,7 +166,9 @@ class HostListScreen extends StatelessWidget {
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 14),
                               child: RevealOnMount(
-                                delay: Duration(milliseconds: 180 + (index * 70)),
+                                delay: Duration(
+                                  milliseconds: 180 + (index * 70),
+                                ),
                                 child: _HostCard(
                                   host: host,
                                   hostProvider: hostProvider,
@@ -227,7 +235,11 @@ class _HostListSkeleton extends StatelessWidget {
           SkeletonCard(
             child: Row(
               children: const [
-                SkeletonBox(width: 58, height: 58, borderRadius: BorderRadius.all(Radius.circular(18))),
+                SkeletonBox(
+                  width: 58,
+                  height: 58,
+                  borderRadius: BorderRadius.all(Radius.circular(18)),
+                ),
                 SizedBox(width: 16),
                 Expanded(
                   child: Column(
@@ -239,9 +251,21 @@ class _HostListSkeleton extends StatelessWidget {
                       SizedBox(height: 12),
                       Row(
                         children: [
-                          SkeletonBox(width: 52, height: 26, borderRadius: BorderRadius.all(Radius.circular(999))),
+                          SkeletonBox(
+                            width: 52,
+                            height: 26,
+                            borderRadius: BorderRadius.all(
+                              Radius.circular(999),
+                            ),
+                          ),
                           SizedBox(width: 8),
-                          SkeletonBox(width: 74, height: 26, borderRadius: BorderRadius.all(Radius.circular(999))),
+                          SkeletonBox(
+                            width: 74,
+                            height: 26,
+                            borderRadius: BorderRadius.all(
+                              Radius.circular(999),
+                            ),
+                          ),
                         ],
                       ),
                     ],
@@ -261,10 +285,7 @@ class _WorkspaceHero extends StatelessWidget {
   final String userName;
   final int hostCount;
 
-  const _WorkspaceHero({
-    required this.userName,
-    required this.hostCount,
-  });
+  const _WorkspaceHero({required this.userName, required this.hostCount});
 
   @override
   Widget build(BuildContext context) {
@@ -387,10 +408,7 @@ class _SectionLabel extends StatelessWidget {
   final String title;
   final String trailing;
 
-  const _SectionLabel({
-    required this.title,
-    required this.trailing,
-  });
+  const _SectionLabel({required this.title, required this.trailing});
 
   @override
   Widget build(BuildContext context) {
@@ -499,7 +517,7 @@ class HostSearchDelegate extends SearchDelegate {
 
   Widget _buildSearchResults(BuildContext context) {
     final results = hosts.where((h) {
-      return h.name.toLowerCase().contains(query.toLowerCase()) ||
+      return h.displayName.toLowerCase().contains(query.toLowerCase()) ||
           h.host.toLowerCase().contains(query.toLowerCase()) ||
           h.username.toLowerCase().contains(query.toLowerCase());
     }).toList();
@@ -529,10 +547,7 @@ class _HostCard extends StatelessWidget {
   final HostModel host;
   final HostProvider hostProvider;
 
-  const _HostCard({
-    required this.host,
-    required this.hostProvider,
-  });
+  const _HostCard({required this.host, required this.hostProvider});
 
   @override
   Widget build(BuildContext context) {
@@ -576,12 +591,14 @@ class _HostCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(host.name, style: theme.textTheme.titleMedium),
+                    Text(host.displayName, style: theme.textTheme.titleMedium),
                     const SizedBox(height: 6),
                     Text(
                       '${host.username}@${host.host}:${host.port}',
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurface.withValues(alpha: 0.68),
+                        color: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.68,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -590,7 +607,14 @@ class _HostCard extends StatelessWidget {
                       runSpacing: 8,
                       children: [
                         _Tag(text: 'SSH', color: theme.colorScheme.primary),
-                        _Tag(text: 'Port ${host.port}', color: theme.colorScheme.secondary),
+                        _Tag(
+                          text: host.authType.label,
+                          color: theme.colorScheme.tertiary,
+                        ),
+                        _Tag(
+                          text: 'Port ${host.port}',
+                          color: theme.colorScheme.secondary,
+                        ),
                       ],
                     ),
                   ],
@@ -625,12 +649,16 @@ class _HostCard extends StatelessWidget {
     );
   }
 
-  void _confirmDelete(BuildContext context, HostProvider provider, HostModel host) {
+  void _confirmDelete(
+    BuildContext context,
+    HostProvider provider,
+    HostModel host,
+  ) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Host'),
-        content: Text('Are you sure you want to delete "${host.name}"?'),
+        content: Text('Are you sure you want to delete "${host.displayName}"?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -643,7 +671,9 @@ class _HostCard extends StatelessWidget {
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Host "${host.name}" deleted successfully!'),
+                    content: Text(
+                      'Host "${host.displayName}" deleted successfully!',
+                    ),
                     behavior: SnackBarBehavior.floating,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
@@ -664,10 +694,7 @@ class _Tag extends StatelessWidget {
   final String text;
   final Color color;
 
-  const _Tag({
-    required this.text,
-    required this.color,
-  });
+  const _Tag({required this.text, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -689,10 +716,7 @@ class _GlowAccent extends StatelessWidget {
   final Color color;
   final double size;
 
-  const _GlowAccent({
-    required this.color,
-    required this.size,
-  });
+  const _GlowAccent({required this.color, required this.size});
 
   @override
   Widget build(BuildContext context) {
