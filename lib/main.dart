@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'providers/app_mode_provider.dart';
 import 'providers/auth_provider.dart';
 import 'providers/connectivity_provider.dart';
 import 'providers/host_provider.dart';
@@ -16,16 +15,10 @@ void main() {
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AppModeProvider()),
         ChangeNotifierProvider(create: (_) => AuthProvider()),
-        ChangeNotifierProxyProvider2<
-          AuthProvider,
-          AppModeProvider,
-          HostProvider
-        >(
+        ChangeNotifierProxyProvider<AuthProvider, HostProvider>(
           create: (_) => HostProvider(),
-          update: (_, auth, appMode, host) =>
-              (host ?? HostProvider())..updateDependencies(auth, appMode),
+          update: (_, auth, host) => (host ?? HostProvider())..updateAuth(auth),
         ),
         ChangeNotifierProvider(create: (_) => SSHService()),
         ChangeNotifierProvider(create: (_) => ConnectivityProvider()),
@@ -41,30 +34,22 @@ class TermSSHApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer3<ThemeProvider, AuthProvider, AppModeProvider>(
-      builder: (context, themeProvider, authProvider, appModeProvider, child) {
+    return Consumer2<ThemeProvider, AuthProvider>(
+      builder: (context, themeProvider, authProvider, child) {
         // Return MaterialApp FIRST to ensure we have a valid context/theme
         return MaterialApp(
           title: 'TermSSH',
           debugShowCheckedModeBanner: false,
           theme: themeProvider.getAppTheme(),
-          home: _getHome(appModeProvider, authProvider),
+          home: _getHome(authProvider),
         );
       },
     );
   }
 
-  Widget _getHome(AppModeProvider appMode, AuthProvider auth) {
-    if (appMode.isLoading || (appMode.isSyncMode && auth.isAuthLoading)) {
+  Widget _getHome(AuthProvider auth) {
+    if (auth.isAuthLoading) {
       return const _SplashLoading();
-    }
-
-    if (!appMode.hasSelectedMode) {
-      return const LoginScreen();
-    }
-
-    if (appMode.isOfflineMode) {
-      return const HostListScreen();
     }
 
     if (auth.isAuthenticated) {

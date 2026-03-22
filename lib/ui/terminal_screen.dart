@@ -24,6 +24,7 @@ class TerminalScreen extends StatefulWidget {
 class _TerminalScreenState extends State<TerminalScreen> {
   final FocusNode _terminalFocusNode = FocusNode();
   final ScrollController _shortcutPanelScrollController = ScrollController();
+  final SSHService _sshService = SSHService();
   late HostModel _currentHost;
   static const List<_TerminalShortcut> _quickShortcuts = [
     _TerminalShortcut(label: 'ESC', input: '\x1B'),
@@ -78,6 +79,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
 
   @override
   void dispose() {
+    _sshService.dispose();
     _shortcutPanelScrollController.dispose();
     _terminalFocusNode.dispose();
     super.dispose();
@@ -85,7 +87,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
 
   Future<void> _connect() async {
     final hostProvider = Provider.of<HostProvider>(context, listen: false);
-    final sshService = Provider.of<SSHService>(context, listen: false);
+    final hadConnectedSession = _sshService.status == SSHStatus.connected;
 
     HostSecretModel? secrets = await hostProvider.getSecrets(_currentHost);
     var shouldPersistSecrets = false;
@@ -95,7 +97,12 @@ class _TerminalScreenState extends State<TerminalScreen> {
       if (!mounted) return;
 
       secrets = await _showCredentialPrompt();
-      if (secrets == null) return;
+      if (secrets == null) {
+        if (!hadConnectedSession && mounted) {
+          Navigator.of(context).maybePop();
+        }
+        return;
+      }
       shouldPersistSecrets = true;
 
       if (secrets.authType != _currentHost.authType) {
@@ -104,7 +111,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
       }
     }
 
-    final validation = await sshService.testConnection(
+    final validation = await _sshService.testConnection(
       host: _currentHost.host,
       port: _currentHost.port,
       username: _currentHost.username,
@@ -115,6 +122,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
     );
     if (!validation.isValid) {
       _showError(validation.message ?? 'SSH connection failed.');
+      if (!hadConnectedSession && mounted) {
+        Navigator.of(context).maybePop();
+      }
       return;
     }
 
@@ -126,7 +136,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
       await hostProvider.saveSecrets(_currentHost, secrets);
     }
 
-    await sshService.connect(
+    await _sshService.connect(
       host: _currentHost.host,
       port: _currentHost.port,
       username: _currentHost.username,
@@ -303,11 +313,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
                     }
 
                     final privateKey = privateKeyController.text.trim();
-                    final sshService = Provider.of<SSHService>(
-                      context,
-                      listen: false,
-                    );
-                    final privateKeyError = sshService.validatePrivateKey(
+                    final privateKeyError = _sshService.validatePrivateKey(
                       privateKey: privateKey,
                       passphrase: passphraseController.text,
                       requirePassphraseIfEncrypted: true,
@@ -461,122 +467,125 @@ class _TerminalScreenState extends State<TerminalScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ThemeProvider>(
-      builder: (context, themeProvider, child) {
-        final terminalTheme = _getTerminalTheme(themeProvider.currentTheme);
+    return ChangeNotifierProvider<SSHService>.value(
+      value: _sshService,
+      child: Consumer<ThemeProvider>(
+        builder: (context, themeProvider, child) {
+          final terminalTheme = _getTerminalTheme(themeProvider.currentTheme);
 
-        return Scaffold(
-          backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-          appBar: AppBar(
-            backgroundColor: Colors.transparent,
-            titleSpacing: 12,
-            title: _TerminalAppBarTitle(
-              hostName: widget.host.displayName,
-              descriptor: '${widget.host.username}@${widget.host.host}',
-            ),
-            actions: [
-              Consumer<SSHService>(
-                builder: (context, ssh, child) {
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: TextButton.icon(
-                      style: TextButton.styleFrom(
-                        backgroundColor: Theme.of(
-                          context,
-                        ).cardColor.withValues(alpha: 0.78),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
+          return Scaffold(
+            backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+            appBar: AppBar(
+              backgroundColor: Colors.transparent,
+              titleSpacing: 12,
+              title: _TerminalAppBarTitle(
+                hostName: widget.host.displayName,
+                descriptor: '${widget.host.username}@${widget.host.host}',
+              ),
+              actions: [
+                Consumer<SSHService>(
+                  builder: (context, ssh, child) {
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: TextButton.icon(
+                        style: TextButton.styleFrom(
+                          backgroundColor: Theme.of(
+                            context,
+                          ).cardColor.withValues(alpha: 0.78),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999),
+                          ),
                         ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                      onPressed: () {
-                        if (ssh.status == SSHStatus.connected) {
-                          ssh.disconnect();
-                        } else {
-                          _connect();
-                        }
-                      },
-                      icon: Icon(
-                        ssh.status == SSHStatus.connected
-                            ? Icons.link_off_rounded
-                            : Icons.link_rounded,
-                        color: ssh.status == SSHStatus.connected
-                            ? Colors.redAccent
-                            : Colors.greenAccent,
-                        size: 18,
-                      ),
-                      label: Text(
-                        ssh.status == SSHStatus.connected
-                            ? 'Connected'
-                            : 'Connect',
-                        style: TextStyle(
+                        onPressed: () {
+                          if (ssh.status == SSHStatus.connected) {
+                            ssh.disconnect();
+                          } else {
+                            _connect();
+                          }
+                        },
+                        icon: Icon(
+                          ssh.status == SSHStatus.connected
+                              ? Icons.link_off_rounded
+                              : Icons.link_rounded,
                           color: ssh.status == SSHStatus.connected
                               ? Colors.redAccent
                               : Colors.greenAccent,
-                          fontWeight: FontWeight.w700,
+                          size: 18,
+                        ),
+                        label: Text(
+                          ssh.status == SSHStatus.connected
+                              ? 'Connected'
+                              : 'Connect',
+                          style: TextStyle(
+                            color: ssh.status == SSHStatus.connected
+                                ? Colors.redAccent
+                                : Colors.greenAccent,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-          body: SafeArea(
-            child: Column(
-              children: [
-                Expanded(
-                  child: Consumer2<SSHService, ThemeProvider>(
-                    builder: (context, ssh, theme, child) {
-                      if (ssh.status == SSHStatus.connecting) {
-                        return _TerminalSkeleton(
-                          hostName: widget.host.displayName,
-                          descriptor:
-                              '${widget.host.username}@${widget.host.host}',
-                        );
-                      }
-
-                      return Container(
-                        color: terminalTheme.background,
-                        padding: const EdgeInsets.all(12.0),
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            // Calculate terminal dimensions (approximate)
-                            final charWidth = theme.terminalFontSize * 0.6;
-                            final charHeight = theme.terminalFontSize * 1.2;
-                            final cols = (constraints.maxWidth / charWidth)
-                                .floor();
-                            final rows = (constraints.maxHeight / charHeight)
-                                .floor();
-
-                            // Signal resize to SSH session
-                            ssh.resize(cols, rows);
-
-                            return TerminalView(
-                              ssh.terminal,
-                              focusNode: _terminalFocusNode,
-                              autofocus: true,
-                              backgroundOpacity: 1.0,
-                              theme: terminalTheme,
-                              textStyle: TerminalStyle(
-                                fontSize: theme.terminalFontSize,
-                              ),
-                            );
-                          },
-                        ),
-                      );
-                    },
-                  ),
+                    );
+                  },
                 ),
-                _buildExtraKeyboard(themeProvider),
               ],
             ),
-          ),
-        );
-      },
+            body: SafeArea(
+              child: Column(
+                children: [
+                  Expanded(
+                    child: Consumer2<SSHService, ThemeProvider>(
+                      builder: (context, ssh, theme, child) {
+                        if (ssh.status == SSHStatus.connecting) {
+                          return _TerminalSkeleton(
+                            hostName: widget.host.displayName,
+                            descriptor:
+                                '${widget.host.username}@${widget.host.host}',
+                          );
+                        }
+
+                        return Container(
+                          color: terminalTheme.background,
+                          padding: const EdgeInsets.all(12.0),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              // Calculate terminal dimensions (approximate)
+                              final charWidth = theme.terminalFontSize * 0.6;
+                              final charHeight = theme.terminalFontSize * 1.2;
+                              final cols = (constraints.maxWidth / charWidth)
+                                  .floor();
+                              final rows = (constraints.maxHeight / charHeight)
+                                  .floor();
+
+                              // Signal resize to SSH session
+                              ssh.resize(cols, rows);
+
+                              return TerminalView(
+                                ssh.terminal,
+                                focusNode: _terminalFocusNode,
+                                autofocus: true,
+                                backgroundOpacity: 1.0,
+                                theme: terminalTheme,
+                                textStyle: TerminalStyle(
+                                  fontSize: theme.terminalFontSize,
+                                ),
+                              );
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  _buildExtraKeyboard(themeProvider),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 

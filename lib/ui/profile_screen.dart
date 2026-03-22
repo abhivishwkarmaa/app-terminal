@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/user_model.dart';
-import '../providers/app_mode_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/host_provider.dart';
 import '../providers/theme_provider.dart';
 import 'host_detail_screen.dart';
+import 'manual_screen.dart';
 import 'widgets/reveal_on_mount.dart';
 import 'widgets/skeleton.dart';
 
@@ -77,51 +77,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Future<void> _switchMode(AppMode mode) async {
-    final appMode = Provider.of<AppModeProvider>(context, listen: false);
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-
-    if (appMode.mode == mode) {
-      return;
-    }
-
-    if (mode == AppMode.offline) {
-      await appMode.selectMode(AppMode.offline);
-      if (mounted) {
-        _showFeedback('Switched to offline mode');
-        Navigator.pop(context);
-      }
-      return;
-    }
-
-    final success = await auth.login();
-    if (!success) {
-      if (mounted) {
-        _showFeedback('Failed to connect sync mode.', isError: true);
-      }
-      return;
-    }
-
-    await appMode.selectMode(AppMode.sync);
-    if (mounted) {
-      _showFeedback('Sync mode enabled');
-      Navigator.pop(context);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final auth = Provider.of<AuthProvider>(context);
-    final appMode = Provider.of<AppModeProvider>(context);
     final themeProvider = Provider.of<ThemeProvider>(context);
     final user = auth.user;
-
-    if (user == null && appMode.isOfflineMode) {
-      return _OfflineProfileScreen(
-        currentMode: appMode.mode ?? AppMode.offline,
-        onSwitchMode: _switchMode,
-      );
-    }
 
     if (user == null) {
       return const _ProfileSkeletonScreen();
@@ -161,10 +121,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 32),
                   RevealOnMount(
                     delay: const Duration(milliseconds: 180),
-                    child: _ModePanel(
-                      currentMode: appMode.mode ?? AppMode.sync,
-                      onSwitchMode: _switchMode,
-                    ),
+                    child: _buildHelpSection(),
                   ),
                   const SizedBox(height: 32),
                   RevealOnMount(
@@ -507,86 +464,80 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ],
     );
   }
-}
 
-class _OfflineProfileScreen extends StatelessWidget {
-  final AppMode currentMode;
-  final ValueChanged<AppMode> onSwitchMode;
+  Widget _buildHelpSection() {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
 
-  const _OfflineProfileScreen({
-    required this.currentMode,
-    required this.onSwitchMode,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('App Settings')),
-      body: ListView(
-        padding: const EdgeInsets.all(24),
-        children: [
-          Text(
-            'Offline workspace',
-            style: Theme.of(context).textTheme.headlineMedium,
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'You are using TermSSH without backend sync. Hosts and credentials stay only on this device.',
-            style: Theme.of(context).textTheme.bodyLarge,
-          ),
-          const SizedBox(height: 24),
-          _ModePanel(currentMode: currentMode, onSwitchMode: onSwitchMode),
-        ],
-      ),
-    );
-  }
-}
-
-class _ModePanel extends StatelessWidget {
-  final AppMode currentMode;
-  final ValueChanged<AppMode> onSwitchMode;
-
-  const _ModePanel({required this.currentMode, required this.onSwitchMode});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor.withValues(alpha: 0.84),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('APP MODE', style: Theme.of(context).textTheme.labelLarge),
-          const SizedBox(height: 12),
-          Text(
-            currentMode.label,
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 10),
-          Text(currentMode.description),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: AppMode.values
-                .map(
-                  (mode) => ChoiceChip(
-                    label: Text(mode.label),
-                    selected: mode == currentMode,
-                    onSelected: (selected) {
-                      if (selected) {
-                        onSwitchMode(mode);
-                      }
-                    },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle('HELP AND SETUP'),
+        const SizedBox(height: 16),
+        Material(
+          color: theme.cardColor,
+          borderRadius: BorderRadius.circular(18),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ManualScreen(),
+                ),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: primary.withValues(alpha: 0.12)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: primary.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(
+                      Icons.menu_book_rounded,
+                      color: primary,
+                    ),
                   ),
-                )
-                .toList(),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Open connection manual',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'See password login steps, RSA key creation, public key copy, AWS usernames, and app import instructions.',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurface.withValues(
+                              alpha: 0.68,
+                            ),
+                            height: 1.45,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Icon(Icons.chevron_right_rounded),
+                ],
+              ),
+            ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
