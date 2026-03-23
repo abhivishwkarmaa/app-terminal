@@ -10,6 +10,8 @@ import '../models/user_model.dart';
 import '../services/backend_config.dart';
 
 class AuthProvider extends ChangeNotifier {
+  static const String _cachedUserKey = 'cached_backend_user';
+
   final _storage = const FlutterSecureStorage(
     iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
   );
@@ -19,12 +21,14 @@ class AuthProvider extends ChangeNotifier {
   BackendUser? _user;
   String? _token;
   bool _isAuthLoading = true;
+  bool _isBackendAvailable = false;
   Future<bool>? _refreshFuture;
 
   BackendUser? get user => _user;
   String? get token => _token;
   bool get isAuthenticated => _token != null && _user != null; // User MUST exist too
   bool get isAuthLoading => _isAuthLoading;
+  bool get isBackendAvailable => _isBackendAvailable;
 
   AuthProvider() {
     _checkInitialAuth();
@@ -43,12 +47,15 @@ class AuthProvider extends ChangeNotifier {
         await prefs.setBool('is_first_run_after_install', false);
       }
 
+      _loadCachedUser(prefs);
+
       _token = await _storage.read(key: 'jwt_token');
       if (_token != null) {
+        final backendAvailable = await checkBackendHealth();
         final validToken = await getValidToken();
-        if (validToken != null) {
+        if (validToken != null && backendAvailable) {
           await fetchProfile();
-        } else {
+        } else if (validToken == null) {
           await logout();
         }
       }
@@ -88,6 +95,12 @@ class AuthProvider extends ChangeNotifier {
 
       if (idToken == null) return false;
 
+      final backendAvailable = await checkBackendHealth();
+      if (!backendAvailable) {
+        debugPrint('Login blocked because backend health check failed.');
+        return false;
+      }
+
       debugPrint('Attempting login at: ${BackendConfig.baseUrl}/auth/google');
       final response = await http.post(
         Uri.parse('${BackendConfig.baseUrl}/auth/google'),
@@ -108,7 +121,7 @@ class AuthProvider extends ChangeNotifier {
         _token = token;
         await _storage.write(key: 'jwt_token', value: _token!);
         await _storage.write(key: 'refresh_token', value: refreshToken);
-        
+
         await fetchProfile();
         notifyListeners();
         return true;
@@ -124,6 +137,27 @@ class AuthProvider extends ChangeNotifier {
 
   Future<String?> getValidToken() async {
     if (_token == null) return null;
+
+    if (_isTokenExpired(_token!)) {
+      if (!_isBackendAvailable) {
+        return _token;
+      }
+      final refreshed = await _refreshAccessToken();
+      if (!refreshed) {
+        return null;
+      }
+    }
+
+    return _token;
+  }
+
+  Future<String?> getSyncToken() async {
+    if (_token == null) return null;
+
+    final backendAvailable = await checkBackendHealth();
+    if (!backendAvailable) {
+      return null;
+    }
 
     if (_isTokenExpired(_token!)) {
       final refreshed = await _refreshAccessToken();
@@ -178,6 +212,10 @@ class AuthProvider extends ChangeNotifier {
     }
 
     try {
+      if (!await checkBackendHealth()) {
+        return false;
+      }
+
       final response = await http.post(
         Uri.parse('${BackendConfig.baseUrl}/auth/refresh'),
         headers: {'Content-Type': 'application/json'},
@@ -191,6 +229,7 @@ class AuthProvider extends ChangeNotifier {
           await _storage.delete(key: 'refresh_token');
           _token = null;
           _user = null;
+          await _clearCachedUser();
           notifyListeners();
         }
         return false;
@@ -217,6 +256,9 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> fetchProfile() async {
+    final backendAvailable = await checkBackendHealth();
+    if (!backendAvailable) return;
+
     final token = await getValidToken();
     if (token == null) return;
 
@@ -230,6 +272,7 @@ class AuthProvider extends ChangeNotifier {
       );
       if (response.statusCode == 200) {
         _user = BackendUser.fromJson(jsonDecode(response.body));
+        await _persistCachedUser();
         notifyListeners();
       } else if (response.statusCode == 401) {
         final refreshed = await _refreshAccessToken();
@@ -249,7 +292,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<bool> updateProfile(String newName) async {
-    final token = await getValidToken();
+    final token = await getSyncToken();
     if (token == null) return false;
 
     try {
@@ -286,6 +329,59 @@ class AuthProvider extends ChangeNotifier {
     await _storage.delete(key: 'refresh_token');
     _token = null;
     _user = null;
+    _isBackendAvailable = false;
+    await _clearCachedUser();
     notifyListeners();
+  }
+
+  Future<bool> checkBackendHealth() async {
+    try {
+      final response = await http
+          .get(Uri.parse('${BackendConfig.baseUrl}/health'))
+          .timeout(const Duration(seconds: 3));
+      final available = response.statusCode == 200;
+      _updateBackendAvailability(available);
+      return available;
+    } catch (_) {
+      _updateBackendAvailability(false);
+      return false;
+    }
+  }
+
+  void _updateBackendAvailability(bool isAvailable) {
+    if (_isBackendAvailable == isAvailable) return;
+    _isBackendAvailable = isAvailable;
+    notifyListeners();
+  }
+
+  void _loadCachedUser(SharedPreferences prefs) {
+    final cachedUserJson = prefs.getString(_cachedUserKey);
+    if (cachedUserJson == null || cachedUserJson.isEmpty) {
+      return;
+    }
+
+    try {
+      _user = BackendUser.fromJson(
+        jsonDecode(cachedUserJson) as Map<String, dynamic>,
+      );
+    } catch (e) {
+      debugPrint('Cached user decode error: $e');
+    }
+  }
+
+  Future<void> _persistCachedUser() async {
+    final user = _user;
+    if (user == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _cachedUserKey,
+      jsonEncode(user.toJson()),
+    );
+  }
+
+  Future<void> _clearCachedUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_cachedUserKey);
   }
 }

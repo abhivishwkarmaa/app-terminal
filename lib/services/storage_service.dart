@@ -5,9 +5,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/host_model.dart';
 import '../models/host_secret_model.dart';
+import '../models/pending_sync_operation.dart';
 
 class StorageService {
   static const String _hostListKey = 'host_list';
+  static const String _pendingSyncKey = 'pending_sync_operations';
   static const String _passwordSuffix = 'password';
   static const String _privateKeySuffix = 'privateKey';
   static const String _passphraseSuffix = 'passphrase';
@@ -50,6 +52,61 @@ class StorageService {
     final hosts = await loadHosts();
     hosts.removeWhere((host) => host.id == hostId);
     await saveHosts(hosts);
+  }
+
+  Future<List<PendingSyncOperation>> loadPendingSyncOperations() async {
+    final prefs = await SharedPreferences.getInstance();
+    final operationsJson = prefs.getString(_pendingSyncKey);
+    if (operationsJson == null || operationsJson.isEmpty) {
+      return [];
+    }
+
+    final decoded = jsonDecode(operationsJson) as List<dynamic>;
+    return decoded
+        .map(
+          (item) => PendingSyncOperation.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
+        .toList();
+  }
+
+  Future<void> savePendingSyncOperations(
+    List<PendingSyncOperation> operations,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = jsonEncode(
+      operations.map((operation) => operation.toJson()).toList(),
+    );
+    await prefs.setString(_pendingSyncKey, encoded);
+  }
+
+  Future<void> enqueueUpsert(HostModel host) async {
+    final operations = await loadPendingSyncOperations();
+    operations.removeWhere((operation) => operation.hostId == host.id);
+    operations.add(
+      PendingSyncOperation(
+        hostId: host.id,
+        action: PendingSyncAction.upsert,
+        host: host,
+      ),
+    );
+    await savePendingSyncOperations(operations);
+  }
+
+  Future<void> enqueueDelete(String hostId) async {
+    final operations = await loadPendingSyncOperations();
+    operations.removeWhere((operation) => operation.hostId == hostId);
+    operations.add(
+      PendingSyncOperation(hostId: hostId, action: PendingSyncAction.delete),
+    );
+    await savePendingSyncOperations(operations);
+  }
+
+  Future<void> clearPendingSyncOperation(String hostId) async {
+    final operations = await loadPendingSyncOperations();
+    operations.removeWhere((operation) => operation.hostId == hostId);
+    await savePendingSyncOperations(operations);
   }
 
   Future<void> saveSecrets(String hostId, HostSecretModel secrets) async {

@@ -94,24 +94,6 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
         return;
       }
 
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(
-                _isEditing
-                    ? 'Verifying updated SSH configuration...'
-                    : 'Validating SSH configuration...',
-              ),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-          );
-      }
-
       final validation = await sshService.testConnection(
         host: hostAddr,
         port: port,
@@ -484,40 +466,87 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
                                   requiredField: !_isEditing,
                                 ),
                               ] else ...[
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        'Paste your PEM private key below. It stays only in secure device storage.',
-                                        style: theme.textTheme.bodySmall
-                                            ?.copyWith(
-                                              color: theme.colorScheme.onSurface
-                                                  .withValues(alpha: 0.66),
-                                              height: 1.45,
-                                            ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    OutlinedButton.icon(
-                                      onPressed: _isSaving
-                                          ? null
-                                          : _pickPrivateKeyFile,
-                                      icon: const Icon(
-                                        Icons.upload_file_rounded,
-                                      ),
-                                      label: const Text('Import'),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    OutlinedButton.icon(
-                                      onPressed: _isSaving
-                                          ? null
-                                          : _pastePrivateKey,
-                                      icon: const Icon(
-                                        Icons.content_paste_rounded,
-                                      ),
-                                      label: const Text('Paste Key'),
-                                    ),
-                                  ],
+                                LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    final isCompact =
+                                        constraints.maxWidth < 560;
+                                    final actionButtons = Wrap(
+                                      spacing: 8,
+                                      runSpacing: 8,
+                                      alignment: isCompact
+                                          ? WrapAlignment.start
+                                          : WrapAlignment.end,
+                                      children: [
+                                        OutlinedButton.icon(
+                                          onPressed: _isSaving
+                                              ? null
+                                              : _pickPrivateKeyFile,
+                                          icon: const Icon(
+                                            Icons.upload_file_rounded,
+                                          ),
+                                          label: const Text('Import'),
+                                        ),
+                                        OutlinedButton.icon(
+                                          onPressed: _isSaving
+                                              ? null
+                                              : _pastePrivateKey,
+                                          icon: const Icon(
+                                            Icons.content_paste_rounded,
+                                          ),
+                                          label: const Text('Paste Key'),
+                                        ),
+                                      ],
+                                    );
+
+                                    if (isCompact) {
+                                      return Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'Paste your PEM private key below. It stays only in secure device storage.',
+                                            style: theme.textTheme.bodySmall
+                                                ?.copyWith(
+                                                  color: theme
+                                                      .colorScheme
+                                                      .onSurface
+                                                      .withValues(alpha: 0.66),
+                                                  height: 1.45,
+                                                ),
+                                          ),
+                                          const SizedBox(height: 12),
+                                          actionButtons,
+                                        ],
+                                      );
+                                    }
+
+                                    return Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            'Paste your PEM private key below. It stays only in secure device storage.',
+                                            style: theme.textTheme.bodySmall
+                                                ?.copyWith(
+                                                  color: theme
+                                                      .colorScheme
+                                                      .onSurface
+                                                      .withValues(alpha: 0.66),
+                                                  height: 1.45,
+                                                ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 16),
+                                        ConstrainedBox(
+                                          constraints: const BoxConstraints(
+                                            maxWidth: 280,
+                                          ),
+                                          child: actionButtons,
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
                                 const SizedBox(height: 12),
                                 _buildTextField(
@@ -548,69 +577,85 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
                       RevealOnMount(
                         delay: const Duration(milliseconds: 180),
                         child: _FormShell(
-                          child: _isSaving
-                              ? const _AddEditHostSkeleton()
-                              : Column(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.secondary.withValues(
+                                    alpha: 0.08,
+                                  ),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(16),
-                                      decoration: BoxDecoration(
-                                        color: theme.colorScheme.secondary
-                                            .withValues(alpha: 0.08),
-                                        borderRadius: BorderRadius.circular(20),
-                                      ),
-                                      child: Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Icon(
-                                            Icons.verified_user_outlined,
-                                            color: theme.colorScheme.secondary,
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Text(
-                                              'Credentials are stored securely on your device and are not synced. Please re-enter them after reinstall.',
-                                              style: theme.textTheme.bodyMedium
-                                                  ?.copyWith(
-                                                    color: theme
-                                                        .colorScheme
-                                                        .onSurface
-                                                        .withValues(
-                                                          alpha: 0.72,
-                                                        ),
-                                                    height: 1.45,
-                                                  ),
+                                    Icon(
+                                      Icons.verified_user_outlined,
+                                      color: theme.colorScheme.secondary,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        'Credentials are stored securely on your device and are not synced. Please re-enter them after reinstall.',
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                              color: theme.colorScheme.onSurface
+                                                  .withValues(alpha: 0.72),
+                                              height: 1.45,
                                             ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(height: 18),
-                                    Text(
-                                      'This host is validated before saving so wrong usernames, malformed PEM keys, missing authorized_keys entries, bad passphrases, and unreachable servers fail fast.',
-                                      style: theme.textTheme.bodyMedium
-                                          ?.copyWith(
-                                            color: theme.colorScheme.onSurface
-                                                .withValues(alpha: 0.66),
-                                            height: 1.5,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 18),
-                                    SizedBox(
-                                      width: double.infinity,
-                                      child: ElevatedButton(
-                                        onPressed: _save,
-                                        child: Text(
-                                          _isEditing
-                                              ? 'Validate and Save'
-                                              : 'Validate and Create',
-                                        ),
                                       ),
                                     ),
                                   ],
                                 ),
+                              ),
+                              const SizedBox(height: 18),
+                              Text(
+                                'This host is validated before saving so wrong usernames, malformed PEM keys, missing authorized_keys entries, bad passphrases, and unreachable servers fail fast.',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: theme.colorScheme.onSurface.withValues(
+                                    alpha: 0.66,
+                                  ),
+                                  height: 1.5,
+                                ),
+                              ),
+                              const SizedBox(height: 18),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: _isSaving ? null : _save,
+                                  child: _isSaving
+                                      ? Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2.2,
+                                                color:
+                                                    theme.colorScheme.onPrimary,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Text(
+                                              _isEditing
+                                                  ? 'Validating update...'
+                                                  : 'Validating host...',
+                                            ),
+                                          ],
+                                        )
+                                      : Text(
+                                          _isEditing
+                                              ? 'Validate and Save'
+                                              : 'Validate and Create',
+                                        ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -618,6 +663,8 @@ class _AddEditHostScreenState extends State<AddEditHostScreen> {
                 ),
               ),
             ),
+            if (_isSaving)
+              const Positioned.fill(child: _SavingValidationOverlay()),
           ],
         ),
       ),
@@ -816,23 +863,60 @@ class _FormShell extends StatelessWidget {
   }
 }
 
-class _AddEditHostSkeleton extends StatelessWidget {
-  const _AddEditHostSkeleton();
+class _SavingValidationOverlay extends StatelessWidget {
+  const _SavingValidationOverlay();
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
-      children: [
-        SkeletonBox(height: 14, width: 220),
-        SizedBox(height: 18),
-        SkeletonBox(height: 72),
-        SizedBox(height: 16),
-        SkeletonBox(height: 56),
-        SizedBox(height: 16),
-        SkeletonBox(height: 56),
-        SizedBox(height: 22),
-        SkeletonBox(height: 56),
-      ],
+    final theme = Theme.of(context);
+    return AbsorbPointer(
+      child: Container(
+        color: theme.scaffoldBackgroundColor.withValues(alpha: 0.7),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: _FormShell(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Row(
+                      children: [
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2.2),
+                        ),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Validating SSH configuration...',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 14),
+                    Text(
+                      'Checking connection, credentials, and host reachability.',
+                    ),
+                    SizedBox(height: 16),
+                    SkeletonBox(height: 12, width: 180),
+                    SizedBox(height: 10),
+                    SkeletonBox(height: 52),
+                    SizedBox(height: 10),
+                    SkeletonBox(height: 52),
+                    SizedBox(height: 10),
+                    SkeletonBox(height: 52),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

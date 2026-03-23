@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../models/host_model.dart';
 import 'add_edit_host_screen.dart';
+import 'add_edit_mysql_screen.dart';
+import 'mysql_workbench_screen.dart';
 import 'terminal_screen.dart';
 import 'widgets/reveal_on_mount.dart';
 
@@ -27,7 +29,10 @@ class HostDetailScreen extends StatelessWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => AddEditHostScreen(host: host),
+                  builder: (context) =>
+                      host.connectionType == ConnectionType.mysql
+                      ? AddEditMySqlScreen(connection: host)
+                      : AddEditHostScreen(host: host),
                 ),
               );
             },
@@ -90,10 +95,26 @@ class HostDetailScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 12),
                           _DetailRow(
-                            icon: Icons.verified_user_outlined,
-                            label: 'Authentication',
-                            value: host.authType.label,
+                            icon: Icons.hub_rounded,
+                            label: 'Connection Type',
+                            value: host.connectionType.label,
                           ),
+                          if (host.connectionType == ConnectionType.ssh) ...[
+                            const SizedBox(height: 12),
+                            _DetailRow(
+                              icon: Icons.verified_user_outlined,
+                              label: 'Authentication',
+                              value: host.authType.label,
+                            ),
+                          ],
+                          if (host.connectionType == ConnectionType.mysql) ...[
+                            const SizedBox(height: 12),
+                            _DetailRow(
+                              icon: Icons.table_rows_rounded,
+                              label: 'Default Database',
+                              value: host.databaseName ?? 'Choose in workbench',
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -104,17 +125,19 @@ class HostDetailScreen extends StatelessWidget {
                     child: _Panel(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: const [
+                        children: [
                           _SectionLabel(title: 'SECURITY'),
-                          SizedBox(height: 14),
+                          const SizedBox(height: 14),
                           _SecurityPill(
                             icon: Icons.lock_outline_rounded,
                             title: 'Device-only secrets',
                             subtitle:
-                                'Passwords, private keys, and passphrases stay in secure on-device storage only.',
+                                host.connectionType == ConnectionType.mysql
+                                ? 'Database passwords stay in secure on-device storage only.'
+                                : 'Passwords, private keys, and passphrases stay in secure on-device storage only.',
                           ),
-                          SizedBox(height: 12),
-                          _SecurityPill(
+                          const SizedBox(height: 12),
+                          const _SecurityPill(
                             icon: Icons.verified_user_outlined,
                             title: 'Reinstall behavior',
                             subtitle:
@@ -134,16 +157,27 @@ class HostDetailScreen extends StatelessWidget {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => TerminalScreen(host: host),
+                              builder: (context) =>
+                                  host.connectionType == ConnectionType.mysql
+                                  ? MySqlWorkbenchScreen(connection: host)
+                                  : TerminalScreen(host: host),
                             ),
                           );
                         },
-                        child: const Row(
+                        child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.terminal_rounded),
-                            SizedBox(width: 10),
-                            Text('Open Terminal'),
+                            Icon(
+                              host.connectionType == ConnectionType.mysql
+                                  ? Icons.storage_rounded
+                                  : Icons.terminal_rounded,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              host.connectionType == ConnectionType.mysql
+                                  ? 'Open Workbench'
+                                  : 'Open Terminal',
+                            ),
                           ],
                         ),
                       ),
@@ -195,13 +229,21 @@ class _Header extends StatelessWidget {
                 ],
               ),
             ),
-            child: Icon(Icons.dns_rounded, size: 40, color: primary),
+            child: Icon(
+              host.connectionType == ConnectionType.mysql
+                  ? Icons.storage_rounded
+                  : Icons.dns_rounded,
+              size: 40,
+              color: primary,
+            ),
           ),
           const SizedBox(height: 18),
           Text(host.displayName, style: theme.textTheme.headlineSmall),
           const SizedBox(height: 8),
           Text(
-            '${host.username}@${host.host}',
+            host.connectionType == ConnectionType.mysql
+                ? '${host.username}@${host.host}:${host.port}'
+                : '${host.username}@${host.host}',
             style: theme.textTheme.bodyLarge?.copyWith(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.68),
             ),

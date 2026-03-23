@@ -5,13 +5,39 @@ import '../models/host_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/host_provider.dart';
 import 'add_edit_host_screen.dart';
+import 'add_edit_mysql_screen.dart';
+import 'mysql_workbench_screen.dart';
 import 'profile_screen.dart';
 import 'terminal_screen.dart';
 import 'widgets/reveal_on_mount.dart';
 import 'widgets/skeleton.dart';
 
-class HostListScreen extends StatelessWidget {
+enum _WorkspaceSection { ssh, mysql }
+
+class HostListScreen extends StatefulWidget {
   const HostListScreen({super.key});
+
+  @override
+  State<HostListScreen> createState() => _HostListScreenState();
+}
+
+class _HostListScreenState extends State<HostListScreen> {
+  _WorkspaceSection _section = _WorkspaceSection.ssh;
+  static const double _sectionSwipeVelocityThreshold = 260;
+
+  void _handleSectionSwipe(DragEndDetails details) {
+    final dx = details.primaryVelocity ?? 0;
+    if (dx.abs() < _sectionSwipeVelocityThreshold) return;
+
+    final nextSection = dx < 0
+        ? _WorkspaceSection.mysql
+        : _WorkspaceSection.ssh;
+    if (nextSection == _section) return;
+
+    setState(() {
+      _section = nextSection;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -70,11 +96,30 @@ class HostListScreen extends StatelessWidget {
                 ),
                 icon: const Icon(Icons.search_rounded),
                 onPressed: () {
+                  final scopedHosts = hostProvider.hosts
+                      .where(
+                        (host) => _section == _WorkspaceSection.ssh
+                            ? host.connectionType == ConnectionType.ssh
+                            : host.connectionType == ConnectionType.mysql,
+                      )
+                      .toList();
+                  if (_section == _WorkspaceSection.ssh) {
+                    showSearch(
+                      context: context,
+                      delegate: HostSearchDelegate(
+                        scopedHosts,
+                        hostProvider,
+                        false,
+                      ),
+                    );
+                    return;
+                  }
                   showSearch(
                     context: context,
                     delegate: HostSearchDelegate(
-                      hostProvider.hosts,
+                      scopedHosts,
                       hostProvider,
+                      true,
                     ),
                   );
                 },
@@ -121,62 +166,162 @@ class HostListScreen extends StatelessWidget {
                     return const _HostListSkeleton();
                   }
 
-                  final hosts = hostProvider.hosts;
-                  return RefreshIndicator(
-                    onRefresh: hostProvider.loadHosts,
-                    child: ListView(
-                      physics: const BouncingScrollPhysics(
-                        parent: AlwaysScrollableScrollPhysics(),
-                      ),
-                      padding: const EdgeInsets.fromLTRB(20, 18, 20, 120),
-                      children: [
-                        RevealOnMount(
-                          child: _WorkspaceHero(
-                            userName: authProvider.user?.name ?? 'Operator',
-                            hostCount: hosts.length,
-                          ),
+                  final sshHosts = hostProvider.hosts
+                      .where(
+                        (host) => host.connectionType == ConnectionType.ssh,
+                      )
+                      .toList();
+                  final mysqlConnections = hostProvider.hosts
+                      .where(
+                        (host) => host.connectionType == ConnectionType.mysql,
+                      )
+                      .toList();
+
+                  return GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onHorizontalDragEnd: _handleSectionSwipe,
+                    child: RefreshIndicator(
+                      onRefresh: hostProvider.loadHosts,
+                      child: ListView(
+                        physics: const BouncingScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
                         ),
-                        const SizedBox(height: 20),
-                        RevealOnMount(
-                          delay: const Duration(milliseconds: 120),
-                          child: _SectionLabel(
-                            title: 'ACTIVE HOSTS',
-                            trailing: '${hosts.length} configured',
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        if (hosts.isEmpty)
+                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 120),
+                        children: [
                           RevealOnMount(
-                            delay: const Duration(milliseconds: 220),
-                            child: _EmptyState(
-                              onCreate: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        const AddEditHostScreen(),
-                                  ),
-                                );
+                            child: _WorkspaceHero(
+                              userName: authProvider.user?.name ?? 'Operator',
+                              sshCount: sshHosts.length,
+                              mysqlCount: mysqlConnections.length,
+                              pendingSyncCount: hostProvider.pendingSyncCount,
+                              section: _section,
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          RevealOnMount(
+                            delay: const Duration(milliseconds: 100),
+                            child: _WorkspaceSectionSwitch(
+                              selected: _section,
+                              onSelected: (section) {
+                                setState(() {
+                                  _section = section;
+                                });
                               },
                             ),
-                          )
-                        else
-                          ...List.generate(hosts.length, (index) {
-                            final host = hosts[index];
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 14),
-                              child: RevealOnMount(
-                                delay: Duration(
-                                  milliseconds: 180 + (index * 70),
-                                ),
-                                child: _HostCard(
-                                  host: host,
-                                  hostProvider: hostProvider,
-                                ),
+                          ),
+                          const SizedBox(height: 20),
+                          if (_section == _WorkspaceSection.ssh) ...[
+                            RevealOnMount(
+                              delay: const Duration(milliseconds: 120),
+                              child: _SectionLabel(
+                                title: 'SSH HOSTS',
+                                trailing: '${sshHosts.length} configured',
                               ),
-                            );
-                          }),
-                      ],
+                            ),
+                            const SizedBox(height: 12),
+                            if (sshHosts.isEmpty)
+                              RevealOnMount(
+                                delay: const Duration(milliseconds: 220),
+                                child: _EmptyState(
+                                  icon: Icons.dns_rounded,
+                                  title: 'No SSH hosts configured yet',
+                                  description:
+                                      'Add your first environment to start opening remote terminal sessions from one clean workspace.',
+                                  buttonLabel: 'Create SSH Host',
+                                  onCreate: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const AddEditHostScreen(),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              )
+                            else
+                              ...List.generate(sshHosts.length, (index) {
+                                final host = sshHosts[index];
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 14),
+                                  child: RevealOnMount(
+                                    delay: Duration(
+                                      milliseconds: 180 + (index * 70),
+                                    ),
+                                    child: _HostCard(
+                                      host: host,
+                                      hostProvider: hostProvider,
+                                      isPendingSync: hostProvider.isPendingSync(
+                                        host.id,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }),
+                          ] else ...[
+                            RevealOnMount(
+                              delay: const Duration(milliseconds: 120),
+                              child: _SectionLabel(
+                                title: 'MYSQL CONNECTIONS',
+                                trailing:
+                                    '${mysqlConnections.length} configured',
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            if (mysqlConnections.isEmpty)
+                              RevealOnMount(
+                                delay: const Duration(milliseconds: 220),
+                                child: _EmptyState(
+                                  icon: Icons.storage_rounded,
+                                  title: 'No MySQL connections yet',
+                                  description:
+                                      'Save a MySQL host to open a mobile workbench with database selection, query runner, and result export.',
+                                  buttonLabel: 'Create MySQL Connection',
+                                  onCreate: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const AddEditMySqlScreen(),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              )
+                            else ...[
+                              RevealOnMount(
+                                delay: const Duration(milliseconds: 180),
+                                child: const _MySqlWorkbenchBanner(),
+                              ),
+                              const SizedBox(height: 14),
+                              ...List.generate(mysqlConnections.length, (
+                                index,
+                              ) {
+                                final connection = mysqlConnections[index];
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 14),
+                                  child: RevealOnMount(
+                                    delay: Duration(
+                                      milliseconds: 220 + (index * 70),
+                                    ),
+                                    child: _MySqlConnectionCard(
+                                      connection: connection,
+                                      hostProvider: hostProvider,
+                                      isPendingSync: hostProvider.isPendingSync(
+                                        connection.id,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }),
+                              RevealOnMount(
+                                delay: const Duration(milliseconds: 420),
+                                child: const _MySqlQuickActions(),
+                              ),
+                            ],
+                          ],
+                        ],
+                      ),
                     ),
                   );
                 },
@@ -187,13 +332,28 @@ class HostListScreen extends StatelessWidget {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
+          if (_section == _WorkspaceSection.ssh) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const AddEditHostScreen(),
+              ),
+            );
+            return;
+          }
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => const AddEditHostScreen()),
+            MaterialPageRoute(builder: (context) => const AddEditMySqlScreen()),
           );
         },
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('Add Host'),
+        icon: Icon(
+          _section == _WorkspaceSection.ssh
+              ? Icons.add_rounded
+              : Icons.storage_rounded,
+        ),
+        label: Text(
+          _section == _WorkspaceSection.ssh ? 'Add Host' : 'Add MySQL',
+        ),
       ),
     );
   }
@@ -229,6 +389,8 @@ class _HostListSkeleton extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 20),
+        const SkeletonBox(width: 180, height: 54),
+        const SizedBox(height: 20),
         const SkeletonBox(width: 140, height: 12),
         const SizedBox(height: 16),
         for (int i = 0; i < 4; i++) ...[
@@ -249,7 +411,9 @@ class _HostListSkeleton extends StatelessWidget {
                       SizedBox(height: 10),
                       SkeletonBox(height: 14),
                       SizedBox(height: 12),
-                      Row(
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
                         children: [
                           SkeletonBox(
                             width: 52,
@@ -258,7 +422,13 @@ class _HostListSkeleton extends StatelessWidget {
                               Radius.circular(999),
                             ),
                           ),
-                          SizedBox(width: 8),
+                          SkeletonBox(
+                            width: 84,
+                            height: 26,
+                            borderRadius: BorderRadius.all(
+                              Radius.circular(999),
+                            ),
+                          ),
                           SkeletonBox(
                             width: 74,
                             height: 26,
@@ -283,15 +453,31 @@ class _HostListSkeleton extends StatelessWidget {
 
 class _WorkspaceHero extends StatelessWidget {
   final String userName;
-  final int hostCount;
+  final int sshCount;
+  final int mysqlCount;
+  final int pendingSyncCount;
+  final _WorkspaceSection section;
 
-  const _WorkspaceHero({required this.userName, required this.hostCount});
+  const _WorkspaceHero({
+    required this.userName,
+    required this.sshCount,
+    required this.mysqlCount,
+    required this.pendingSyncCount,
+    required this.section,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final primary = theme.colorScheme.primary;
     final secondary = theme.colorScheme.secondary;
+
+    final title = section == _WorkspaceSection.ssh
+        ? 'Remote access at a glance'
+        : 'Database control from your phone';
+    final description = section == _WorkspaceSection.ssh
+        ? 'Launch remote sessions, audit saved infrastructure, and keep terminal access organized in one place.'
+        : 'Browse saved database connections, jump into query tools, and keep essential MySQL actions close at hand.';
 
     return Container(
       padding: const EdgeInsets.all(24),
@@ -317,18 +503,35 @@ class _WorkspaceHero extends StatelessWidget {
               borderRadius: BorderRadius.circular(999),
             ),
             child: Text(
-              'SYNC STATUS: READY',
+              section == _WorkspaceSection.ssh
+                  ? 'SSH WORKSPACE'
+                  : 'MYSQL WORKBENCH',
               style: theme.textTheme.labelMedium?.copyWith(color: primary),
             ),
           ),
           const SizedBox(height: 18),
-          Text(
-            'Welcome back, $userName',
-            style: theme.textTheme.headlineMedium?.copyWith(height: 1),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  'Welcome back, $userName',
+                  style: theme.textTheme.headlineMedium?.copyWith(height: 1),
+                ),
+              ),
+              _SyncIndicator(pendingCount: pendingSyncCount),
+            ],
           ),
           const SizedBox(height: 10),
           Text(
-            'Launch remote sessions, audit saved infrastructure, and keep terminal access organized in one place.',
+            title,
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            description,
             style: theme.textTheme.bodyLarge?.copyWith(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.72),
               height: 1.5,
@@ -339,16 +542,16 @@ class _WorkspaceHero extends StatelessWidget {
             children: [
               Expanded(
                 child: _MiniStat(
-                  label: 'Saved hosts',
-                  value: hostCount.toString().padLeft(2, '0'),
+                  label: 'SSH hosts',
+                  value: sshCount.toString().padLeft(2, '0'),
                   accent: primary,
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: _MiniStat(
-                  label: 'Protocol',
-                  value: 'SSH',
+                  label: 'MySQL',
+                  value: mysqlCount.toString().padLeft(2, '0'),
                   accent: secondary,
                 ),
               ),
@@ -404,6 +607,115 @@ class _MiniStat extends StatelessWidget {
   }
 }
 
+class _WorkspaceSectionSwitch extends StatelessWidget {
+  final _WorkspaceSection selected;
+  final ValueChanged<_WorkspaceSection> onSelected;
+
+  const _WorkspaceSectionSwitch({
+    required this.selected,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: theme.cardColor.withValues(alpha: 0.86),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.08),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _SegmentButton(
+              label: 'SSH',
+              icon: Icons.terminal_rounded,
+              selected: selected == _WorkspaceSection.ssh,
+              onTap: () => onSelected(_WorkspaceSection.ssh),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _SegmentButton(
+              label: 'MySQL',
+              icon: Icons.storage_rounded,
+              selected: selected == _WorkspaceSection.mysql,
+              onTap: () => onSelected(_WorkspaceSection.mysql),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SegmentButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _SegmentButton({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          color: selected
+              ? primary.withValues(alpha: 0.14)
+              : Colors.transparent,
+          border: Border.all(
+            color: selected
+                ? primary.withValues(alpha: 0.18)
+                : Colors.transparent,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: selected
+                  ? primary
+                  : theme.colorScheme.onSurface.withValues(alpha: 0.58),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: selected
+                    ? primary
+                    : theme.colorScheme.onSurface.withValues(alpha: 0.72),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SectionLabel extends StatelessWidget {
   final String title;
   final String trailing;
@@ -430,9 +742,19 @@ class _SectionLabel extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String description;
+  final String buttonLabel;
   final VoidCallback onCreate;
 
-  const _EmptyState({required this.onCreate});
+  const _EmptyState({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.buttonLabel,
+    required this.onCreate,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -456,17 +778,13 @@ class _EmptyState extends StatelessWidget {
               borderRadius: BorderRadius.circular(28),
               color: theme.colorScheme.primary.withValues(alpha: 0.1),
             ),
-            child: Icon(
-              Icons.dns_rounded,
-              size: 40,
-              color: theme.colorScheme.primary,
-            ),
+            child: Icon(icon, size: 40, color: theme.colorScheme.primary),
           ),
           const SizedBox(height: 18),
-          Text('No hosts configured yet', style: theme.textTheme.headlineSmall),
+          Text(title, style: theme.textTheme.headlineSmall),
           const SizedBox(height: 10),
           Text(
-            'Add your first environment to start opening SSH sessions from a cleaner, synced workspace.',
+            description,
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.66),
@@ -474,10 +792,7 @@ class _EmptyState extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 22),
-          ElevatedButton(
-            onPressed: onCreate,
-            child: const Text('Create First Host'),
-          ),
+          ElevatedButton(onPressed: onCreate, child: Text(buttonLabel)),
         ],
       ),
     );
@@ -487,8 +802,9 @@ class _EmptyState extends StatelessWidget {
 class HostSearchDelegate extends SearchDelegate {
   final List<HostModel> hosts;
   final HostProvider hostProvider;
+  final bool showMySql;
 
-  HostSearchDelegate(this.hosts, this.hostProvider);
+  HostSearchDelegate(this.hosts, this.hostProvider, this.showMySql);
 
   @override
   List<Widget>? buildActions(BuildContext context) {
@@ -537,7 +853,18 @@ class HostSearchDelegate extends SearchDelegate {
       separatorBuilder: (context, index) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
         final host = results[index];
-        return _HostCard(host: host, hostProvider: hostProvider);
+        if (showMySql) {
+          return _MySqlConnectionCard(
+            connection: host,
+            hostProvider: hostProvider,
+            isPendingSync: hostProvider.isPendingSync(host.id),
+          );
+        }
+        return _HostCard(
+          host: host,
+          hostProvider: hostProvider,
+          isPendingSync: hostProvider.isPendingSync(host.id),
+        );
       },
     );
   }
@@ -546,8 +873,13 @@ class HostSearchDelegate extends SearchDelegate {
 class _HostCard extends StatelessWidget {
   final HostModel host;
   final HostProvider hostProvider;
+  final bool isPendingSync;
 
-  const _HostCard({required this.host, required this.hostProvider});
+  const _HostCard({
+    required this.host,
+    required this.hostProvider,
+    required this.isPendingSync,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -607,6 +939,10 @@ class _HostCard extends StatelessWidget {
                       runSpacing: 8,
                       children: [
                         _Tag(text: 'SSH', color: theme.colorScheme.primary),
+                        _Tag(
+                          text: isPendingSync ? 'Pending sync' : 'Synced',
+                          color: isPendingSync ? Colors.orange : Colors.green,
+                        ),
                         _Tag(
                           text: host.authType.label,
                           color: theme.colorScheme.tertiary,
@@ -683,6 +1019,429 @@ class _HostCard extends StatelessWidget {
               }
             },
             child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MySqlWorkbenchBanner extends StatelessWidget {
+  const _MySqlWorkbenchBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        color: theme.cardColor.withValues(alpha: 0.86),
+        border: Border.all(color: primary.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(Icons.table_chart_rounded, color: primary),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  'MySQL workbench',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Open saved database connections, switch databases, run basic queries, and export results without mixing the database workflow into SSH.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+              height: 1.45,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MySqlConnectionCard extends StatelessWidget {
+  final HostModel connection;
+  final HostProvider hostProvider;
+  final bool isPendingSync;
+
+  const _MySqlConnectionCard({
+    required this.connection,
+    required this.hostProvider,
+    required this.isPendingSync,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        color: theme.cardColor.withValues(alpha: 0.88),
+        border: Border.all(color: primary.withValues(alpha: 0.08)),
+      ),
+      child: InkWell(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) =>
+                  MySqlWorkbenchScreen(connection: connection),
+            ),
+          );
+        },
+        borderRadius: BorderRadius.circular(24),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 58,
+                    height: 58,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(18),
+                      gradient: LinearGradient(
+                        colors: [
+                          theme.colorScheme.secondary.withValues(alpha: 0.18),
+                          theme.colorScheme.tertiary.withValues(alpha: 0.12),
+                        ],
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.storage_rounded,
+                      color: theme.colorScheme.secondary,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          connection.displayName,
+                          style: theme.textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '${connection.username}@${connection.host}:${connection.port}',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurface.withValues(
+                              alpha: 0.68,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _StatusPill(
+                        label: isPendingSync ? 'Pending sync' : 'Synced',
+                        online: !isPendingSync,
+                      ),
+                      PopupMenuButton<String>(
+                        icon: Icon(
+                          Icons.more_horiz_rounded,
+                          color: theme.colorScheme.onSurface.withValues(
+                            alpha: 0.58,
+                          ),
+                        ),
+                        onSelected: (value) {
+                          if (value == 'edit') {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    AddEditMySqlScreen(connection: connection),
+                              ),
+                            );
+                          } else if (value == 'delete') {
+                            _confirmDelete(context, hostProvider, connection);
+                          }
+                        },
+                        itemBuilder: (context) => const [
+                          PopupMenuItem(value: 'edit', child: Text('Edit')),
+                          PopupMenuItem(value: 'delete', child: Text('Delete')),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: _InfoTile(
+                      label: 'Default DB',
+                      value: connection.databaseName ?? 'Not set',
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _InfoTile(
+                      label: 'Auth',
+                      value: connection.authType.label,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _Tag(text: 'MySQL', color: theme.colorScheme.secondary),
+                  _Tag(
+                    text: isPendingSync ? 'Pending sync' : 'Synced',
+                    color: isPendingSync ? Colors.orange : Colors.green,
+                  ),
+                  _Tag(
+                    text: 'Port ${connection.port}',
+                    color: theme.colorScheme.primary,
+                  ),
+                  _Tag(text: 'Saved', color: theme.colorScheme.tertiary),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _confirmDelete(
+    BuildContext context,
+    HostProvider provider,
+    HostModel connection,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete MySQL Connection'),
+        content: Text(
+          'Are you sure you want to delete "${connection.displayName}"?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              await provider.deleteHost(connection.id);
+              if (context.mounted) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'MySQL connection "${connection.displayName}" deleted successfully!',
+                    ),
+                    behavior: SnackBarBehavior.floating,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                );
+              }
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MySqlQuickActions extends StatelessWidget {
+  const _MySqlQuickActions();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        color: theme.cardColor.withValues(alpha: 0.88),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Quick actions',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 14),
+          const Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _QuickActionChip(
+                icon: Icons.play_arrow_rounded,
+                label: 'Run Query',
+              ),
+              _QuickActionChip(
+                icon: Icons.list_alt_rounded,
+                label: 'Show Tables',
+              ),
+              _QuickActionChip(
+                icon: Icons.file_upload_rounded,
+                label: 'Import SQL',
+              ),
+              _QuickActionChip(
+                icon: Icons.file_download_rounded,
+                label: 'Export CSV',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoTile extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _InfoTile({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.56),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(value, style: theme.textTheme.titleSmall),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  final String label;
+  final bool online;
+
+  const _StatusPill({required this.label, required this.online});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = online ? Colors.green : Colors.orange;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color),
+      ),
+    );
+  }
+}
+
+class _SyncIndicator extends StatelessWidget {
+  final int pendingCount;
+
+  const _SyncIndicator({required this.pendingCount});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasPending = pendingCount > 0;
+    final color = hasPending ? Colors.orange : Colors.green;
+    final label = hasPending ? '$pendingCount pending sync' : 'All synced';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Text(
+        label,
+        style: theme.textTheme.labelMedium?.copyWith(
+          color: color,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickActionChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _QuickActionChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: theme.colorScheme.primary,
+            ),
           ),
         ],
       ),

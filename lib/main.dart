@@ -7,7 +7,6 @@ import 'providers/host_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/ssh_service.dart';
 import 'ui/host_list_screen.dart';
-import 'ui/offline_screen.dart';
 import 'ui/login_screen.dart';
 import 'ui/widgets/skeleton.dart';
 
@@ -53,12 +52,7 @@ class TermSSHApp extends StatelessWidget {
     }
 
     if (auth.isAuthenticated) {
-      return Consumer<ConnectivityProvider>(
-        builder: (context, connectivity, child) {
-          if (connectivity.isOffline) return const OfflineScreen();
-          return const HostListScreen();
-        },
-      );
+      return const HostListScreen();
     }
 
     return const LoginScreen();

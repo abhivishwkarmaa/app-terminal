@@ -28,6 +28,7 @@ class SSHService extends ChangeNotifier {
   SSHSession? _session;
   SSHStatus _status = SSHStatus.disconnected;
   String _error = '';
+  bool _isBackgroundEnabled = false;
 
   final Terminal terminal = Terminal(maxLines: 10000);
 
@@ -69,6 +70,7 @@ class SSHService extends ChangeNotifier {
           );
           await FlutterBackground.initialize(androidConfig: androidConfig);
           await FlutterBackground.enableBackgroundExecution();
+          _isBackgroundEnabled = true;
         } catch (_) {
           // Ignore if background task is already enabled or unsupported on current platform (iOS limitation)
         }
@@ -429,8 +431,9 @@ class SSHService extends ChangeNotifier {
     _status = SSHStatus.disconnected;
     terminal.write('\r\nDisconnected.\r\n');
     try {
-      if (Platform.isAndroid || Platform.isIOS) {
-        FlutterBackground.disableBackgroundExecution();
+      if (_isBackgroundEnabled && (Platform.isAndroid || Platform.isIOS)) {
+        FlutterBackground.disableBackgroundExecution().catchError((_) => false);
+        _isBackgroundEnabled = false;
       }
     } catch (_) {}
     notifyListeners();

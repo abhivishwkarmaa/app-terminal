@@ -48,6 +48,9 @@ dependencies:
   http: ^1.6.0
   google_fonts: ^8.0.2
   file_picker: ^10.3.2
+  flutter_file_dialog: ^3.0.3
+  mysql_client: ^0.0.27
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:

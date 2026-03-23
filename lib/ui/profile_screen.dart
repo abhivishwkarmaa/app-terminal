@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/host_model.dart';
 import '../models/user_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/host_provider.dart';
 import '../providers/theme_provider.dart';
 import 'host_detail_screen.dart';
 import 'manual_screen.dart';
+import 'mysql_workbench_screen.dart';
 import 'widgets/reveal_on_mount.dart';
 import 'widgets/skeleton.dart';
 
@@ -141,7 +143,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 30),
                     child: Center(
                       child: Text(
-                        'No terminals linked yet.',
+                        'No saved connections yet.',
                         style: TextStyle(
                           color: Colors.grey[600],
                           fontSize: 13,
@@ -174,7 +176,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               context,
                               MaterialPageRoute(
                                 builder: (context) =>
-                                    HostDetailScreen(host: host),
+                                    host.connectionType == ConnectionType.mysql
+                                    ? MySqlWorkbenchScreen(connection: host)
+                                    : HostDetailScreen(host: host),
                               ),
                             );
                           },
@@ -191,7 +195,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: Icon(
-                              Icons.dns_rounded,
+                              host.connectionType == ConnectionType.mysql
+                                  ? Icons.storage_rounded
+                                  : Icons.dns_rounded,
                               size: 20,
                               color: Theme.of(context).colorScheme.primary,
                             ),
@@ -204,7 +210,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                           subtitle: Text(
-                            host.host,
+                            host.connectionType == ConnectionType.mysql
+                                ? '${host.username}@${host.host}:${host.port}'
+                                : host.host,
                             style: TextStyle(
                               color: Colors.grey[600],
                               fontSize: 11,
@@ -359,7 +367,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           )
         else
           Text(
-            user.name,
+            user.displayName,
             style: const TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.w900,
@@ -482,9 +490,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (context) => const ManualScreen(),
-                ),
+                MaterialPageRoute(builder: (context) => const ManualScreen()),
               );
             },
             child: Container(
@@ -501,10 +507,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       color: primary.withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: Icon(
-                      Icons.menu_book_rounded,
-                      color: primary,
-                    ),
+                    child: Icon(Icons.menu_book_rounded, color: primary),
                   ),
                   const SizedBox(width: 14),
                   Expanded(

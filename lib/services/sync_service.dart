@@ -23,7 +23,9 @@ class SyncService {
         final List<dynamic> data = jsonDecode(response.body);
         return data.map((json) => HostModel.fromJson(json)).toList();
       }
-      debugPrint('Fetch terminals failed: ${response.statusCode} ${response.body}');
+      debugPrint(
+        'Fetch terminals failed: ${response.statusCode} ${response.body}',
+      );
       return [];
     } catch (e) {
       debugPrint('Fetch terminals error: $e');
@@ -39,10 +41,12 @@ class SyncService {
         body: jsonEncode(host.toJson()),
       );
 
-      if (response.statusCode == 201) {
+      if (response.statusCode == 200 || response.statusCode == 201) {
         return HostModel.fromJson(jsonDecode(response.body));
       }
-      debugPrint('Create terminal failed: ${response.statusCode} ${response.body}');
+      debugPrint(
+        'Create terminal failed: ${response.statusCode} ${response.body}',
+      );
       return null;
     } catch (e) {
       debugPrint('Create terminal error: $e');
@@ -58,7 +62,9 @@ class SyncService {
         body: jsonEncode(host.toJson()),
       );
       if (response.statusCode != 200) {
-        debugPrint('Update terminal failed: ${response.statusCode} ${response.body}');
+        debugPrint(
+          'Update terminal failed: ${response.statusCode} ${response.body}',
+        );
       }
       return response.statusCode == 200;
     } catch (e) {
