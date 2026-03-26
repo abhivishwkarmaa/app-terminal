@@ -34,11 +34,12 @@ class SSHService extends ChangeNotifier {
 
   SSHStatus get status => _status;
   String get error => _error;
+  bool get hasActiveSession => _session != null;
 
   SSHService() {
     // Listen to terminal output (typing)
     terminal.onOutput = (data) {
-      if (_session != null && _status == SSHStatus.connected) {
+      if (_session != null) {
         _session!.stdin.add(utf8.encode(data));
       }
     };
@@ -412,13 +413,13 @@ class SSHService extends ChangeNotifier {
   }
 
   void writeToStdin(String data) {
-    if (_session != null && _status == SSHStatus.connected) {
+    if (_session != null) {
       _session!.stdin.add(utf8.encode(data));
     }
   }
 
   void resize(int width, int height) {
-    if (_session != null && _status == SSHStatus.connected) {
+    if (_session != null) {
       _session!.resizeTerminal(width, height);
     }
   }

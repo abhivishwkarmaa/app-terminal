@@ -40,6 +40,17 @@ class TermSSHApp extends StatelessWidget {
           title: 'TermSSH',
           debugShowCheckedModeBanner: false,
           theme: themeProvider.getAppTheme(),
+          builder: (context, child) {
+            final mediaQuery = MediaQuery.of(context);
+            final platform = Theme.of(context).platform;
+            final textScale = platform == TargetPlatform.android ? 0.92 : 1.0;
+            return MediaQuery(
+              data: mediaQuery.copyWith(
+                textScaler: TextScaler.linear(textScale),
+              ),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
           home: _getHome(authProvider),
         );
       },

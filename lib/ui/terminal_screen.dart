@@ -442,7 +442,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
     }
   }
 
-  bool _isKeyboardExpanded = false;
+  bool _isKeyboardExpanded = true;
 
   void _toggleKeyboard() {
     setState(() => _isKeyboardExpanded = !_isKeyboardExpanded);
@@ -455,6 +455,12 @@ class _TerminalScreenState extends State<TerminalScreen> {
   }
 
   void _sendShortcut(SSHService ssh, _TerminalShortcut shortcut) {
+    if (!ssh.hasActiveSession) {
+      _showError('SSH is not connected. Tap Connect first.');
+      return;
+    }
+    _terminalFocusNode.requestFocus();
+
     if (shortcut.controlKey != null) {
       ssh.writeToStdin(_controlSequence(shortcut.controlKey!));
       return;
@@ -485,6 +491,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
               actions: [
                 Consumer<SSHService>(
                   builder: (context, ssh, child) {
+                    final isConnected =
+                        ssh.hasActiveSession ||
+                        ssh.status == SSHStatus.connected;
                     return Padding(
                       padding: const EdgeInsets.only(right: 12),
                       child: TextButton.icon(
@@ -501,27 +510,25 @@ class _TerminalScreenState extends State<TerminalScreen> {
                           ),
                         ),
                         onPressed: () {
-                          if (ssh.status == SSHStatus.connected) {
+                          if (isConnected) {
                             ssh.disconnect();
                           } else {
                             _connect();
                           }
                         },
                         icon: Icon(
-                          ssh.status == SSHStatus.connected
+                          isConnected
                               ? Icons.link_off_rounded
                               : Icons.link_rounded,
-                          color: ssh.status == SSHStatus.connected
+                          color: isConnected
                               ? Colors.redAccent
                               : Colors.greenAccent,
                           size: 18,
                         ),
                         label: Text(
-                          ssh.status == SSHStatus.connected
-                              ? 'Connected'
-                              : 'Connect',
+                          isConnected ? 'Connected' : 'Connect',
                           style: TextStyle(
-                            color: ssh.status == SSHStatus.connected
+                            color: isConnected
                                 ? Colors.redAccent
                                 : Colors.greenAccent,
                             fontWeight: FontWeight.w700,
@@ -579,7 +586,10 @@ class _TerminalScreenState extends State<TerminalScreen> {
                       },
                     ),
                   ),
-                  _buildExtraKeyboard(themeProvider),
+                  Consumer<SSHService>(
+                    builder: (context, ssh, child) =>
+                        _buildExtraKeyboard(themeProvider, ssh),
+                  ),
                 ],
               ),
             ),
@@ -589,8 +599,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
     );
   }
 
-  Widget _buildExtraKeyboard(ThemeProvider themeProvider) {
-    final ssh = Provider.of<SSHService>(context, listen: false);
+  Widget _buildExtraKeyboard(ThemeProvider themeProvider, SSHService ssh) {
     final isDark = themeProvider.isDarkBg;
     final bgColor = isDark ? const Color(0xFF1A1A1A) : Colors.grey[200]!;
     final textColor = isDark ? Colors.white : Colors.black87;
@@ -600,9 +609,11 @@ class _TerminalScreenState extends State<TerminalScreen> {
 
     // Check if keyboard is visible to toggle icon
     final isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
-    final expandedPanelMaxHeight = isKeyboardVisible
-        ? screenHeight * 0.24
-        : screenHeight * 0.34;
+    final expandedPanelMaxHeight =
+        (isKeyboardVisible ? screenHeight * 0.2 : screenHeight * 0.26).clamp(
+          120.0,
+          220.0,
+        );
 
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
@@ -639,7 +650,18 @@ class _TerminalScreenState extends State<TerminalScreen> {
                         ),
                       _keyButton(
                         'CLR',
-                        () => ssh.terminal.write('\x1b[2J\x1b[H'),
+                        () {
+                          if (!ssh.hasActiveSession) {
+                            _showError(
+                              'SSH is not connected. Tap Connect first.',
+                            );
+                            return;
+                          }
+                          _terminalFocusNode.requestFocus();
+                          // Clear both terminal screen and active shell line.
+                          ssh.writeToStdin('\x0C');
+                          ssh.terminal.write('\x1b[2J\x1b[H');
+                        },
                         textColor,
                         keyColor,
                       ),
@@ -670,9 +692,8 @@ class _TerminalScreenState extends State<TerminalScreen> {
             AnimatedContainer(
               duration: const Duration(milliseconds: 220),
               margin: const EdgeInsets.only(top: 8, bottom: 4),
-              constraints: BoxConstraints(
-                maxHeight: expandedPanelMaxHeight.clamp(150.0, 280.0),
-              ),
+              clipBehavior: Clip.hardEdge,
+              constraints: BoxConstraints(maxHeight: expandedPanelMaxHeight),
               decoration: BoxDecoration(
                 color: sectionBg,
                 borderRadius: BorderRadius.circular(12),
@@ -685,80 +706,91 @@ class _TerminalScreenState extends State<TerminalScreen> {
                   physics: const BouncingScrollPhysics(
                     parent: AlwaysScrollableScrollPhysics(),
                   ),
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(10),
                   child: Column(
                     children: [
                       _shortcutSection(
                         title: 'CTRL SHORTCUTS',
                         textColor: textColor,
-                        child: Wrap(
-                          children: [
-                            for (final shortcut in _controlShortcuts)
-                              _keyButton(
-                                shortcut.label,
-                                () => _sendShortcut(ssh, shortcut),
-                                shortcut.accent ?? textColor,
-                                keyColor,
-                              ),
-                          ],
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              for (final shortcut in _controlShortcuts)
+                                _keyButton(
+                                  shortcut.label,
+                                  () => _sendShortcut(ssh, shortcut),
+                                  shortcut.accent ?? textColor,
+                                  keyColor,
+                                ),
+                            ],
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 8),
                       _shortcutSection(
                         title: 'SHELL SYMBOLS',
                         textColor: textColor,
-                        child: Wrap(
-                          children: [
-                            for (final shortcut in _shellShortcuts)
-                              _keyButton(
-                                shortcut.label,
-                                () => _sendShortcut(ssh, shortcut),
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              for (final shortcut in _shellShortcuts)
+                                _keyButton(
+                                  shortcut.label,
+                                  () => _sendShortcut(ssh, shortcut),
+                                  textColor,
+                                  keyColor,
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              Text(
+                                'FONT SIZE',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1,
+                                  color: textColor.withValues(alpha: 0.5),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              _controlButton(
+                                Icons.remove_rounded,
+                                themeProvider.decreaseFontSize,
                                 textColor,
                                 keyColor,
                               ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            Text(
-                              'FONT SIZE',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 1,
-                                color: textColor.withValues(alpha: 0.5),
-                              ),
-                            ),
-                            _controlButton(
-                              Icons.remove_rounded,
-                              themeProvider.decreaseFontSize,
-                              textColor,
-                              keyColor,
-                            ),
-                            Container(
-                              constraints: const BoxConstraints(minWidth: 40.0),
-                              alignment: Alignment.center,
-                              child: Text(
-                                '${themeProvider.terminalFontSize.toInt()}',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w900,
-                                  color: textColor,
+                              Container(
+                                constraints: const BoxConstraints(
+                                  minWidth: 40.0,
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  '${themeProvider.terminalFontSize.toInt()}',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w900,
+                                    color: textColor,
+                                  ),
                                 ),
                               ),
-                            ),
-                            _controlButton(
-                              Icons.add_rounded,
-                              themeProvider.increaseFontSize,
-                              textColor,
-                              keyColor,
-                            ),
-                          ],
+                              _controlButton(
+                                Icons.add_rounded,
+                                themeProvider.increaseFontSize,
+                                textColor,
+                                keyColor,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -913,6 +945,8 @@ class _TerminalAppBarTitle extends StatelessWidget {
         const SizedBox(height: 2),
         Text(
           descriptor,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurface.withValues(alpha: 0.62),
           ),
@@ -939,56 +973,74 @@ class _TerminalSkeleton extends StatelessWidget {
         builder: (context, constraints) {
           const lineHeight = 18.0;
           const lineGap = 10.0;
-          const reservedHeight = 140.0;
+          final isCompact = constraints.maxHeight < 260;
+          final reservedHeight = isCompact ? 92.0 : 140.0;
           final availableLineSpace = (constraints.maxHeight - reservedHeight)
-              .clamp(120.0, double.infinity);
+              .clamp(80.0, double.infinity);
           final lineCount = (availableLineSpace / (lineHeight + lineGap))
               .floor()
-              .clamp(8, 24);
+              .clamp(isCompact ? 4 : 8, 24);
+          final linePanelHeight = (lineCount * (lineHeight + lineGap)).clamp(
+            90.0,
+            constraints.maxHeight * (isCompact ? 0.65 : 0.75),
+          );
 
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Connecting to $hostName',
-                style: theme.textTheme.titleLarge,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                descriptor,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.64),
-                ),
-              ),
-              const SizedBox(height: 20),
-              const SkeletonBox(height: 16, width: 180),
-              const SizedBox(height: 12),
-              const SkeletonBox(height: 14),
-              const SizedBox(height: 10),
-              const SkeletonBox(height: 14, width: 280),
-              const SizedBox(height: 24),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: ListView.builder(
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: lineCount,
-                    itemBuilder: (context, index) {
-                      return SkeletonBox(
-                        height: lineHeight,
-                        width: index % 3 == 0
-                            ? double.infinity
-                            : (index.isEven ? 260 : 320),
-                        borderRadius: BorderRadius.circular(8),
-                        margin: EdgeInsets.only(
-                          bottom: index == lineCount - 1 ? 0 : lineGap,
-                        ),
-                      );
-                    },
+          return SingleChildScrollView(
+            physics: const ClampingScrollPhysics(),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Connecting to $hostName',
+                    style: theme.textTheme.titleLarge,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ),
+                  const SizedBox(height: 6),
+                  Text(
+                    descriptor,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(
+                        alpha: 0.64,
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: isCompact ? 12 : 20),
+                  const SkeletonBox(height: 16, width: 180),
+                  const SizedBox(height: 10),
+                  const SkeletonBox(height: 14),
+                  const SizedBox(height: 8),
+                  const SkeletonBox(height: 14, width: 280),
+                  SizedBox(height: isCompact ? 12 : 20),
+                  SizedBox(
+                    height: linePanelHeight,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: ListView.builder(
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: lineCount,
+                        itemBuilder: (context, index) {
+                          return SkeletonBox(
+                            height: lineHeight,
+                            width: index % 3 == 0
+                                ? double.infinity
+                                : (index.isEven ? 260 : 320),
+                            borderRadius: BorderRadius.circular(8),
+                            margin: EdgeInsets.only(
+                              bottom: index == lineCount - 1 ? 0 : lineGap,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           );
         },
       ),

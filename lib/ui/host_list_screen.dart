@@ -23,21 +23,6 @@ class HostListScreen extends StatefulWidget {
 
 class _HostListScreenState extends State<HostListScreen> {
   _WorkspaceSection _section = _WorkspaceSection.ssh;
-  static const double _sectionSwipeVelocityThreshold = 260;
-
-  void _handleSectionSwipe(DragEndDetails details) {
-    final dx = details.primaryVelocity ?? 0;
-    if (dx.abs() < _sectionSwipeVelocityThreshold) return;
-
-    final nextSection = dx < 0
-        ? _WorkspaceSection.mysql
-        : _WorkspaceSection.ssh;
-    if (nextSection == _section) return;
-
-    setState(() {
-      _section = nextSection;
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -177,151 +162,135 @@ class _HostListScreenState extends State<HostListScreen> {
                       )
                       .toList();
 
-                  return GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onHorizontalDragEnd: _handleSectionSwipe,
-                    child: RefreshIndicator(
-                      onRefresh: hostProvider.loadHosts,
-                      child: ListView(
-                        physics: const BouncingScrollPhysics(
-                          parent: AlwaysScrollableScrollPhysics(),
+                  return RefreshIndicator(
+                    onRefresh: hostProvider.loadHosts,
+                    child: ListView(
+                      physics: const BouncingScrollPhysics(
+                        parent: AlwaysScrollableScrollPhysics(),
+                      ),
+                      padding: const EdgeInsets.fromLTRB(20, 18, 20, 120),
+                      children: [
+                        RevealOnMount(
+                          child: _WorkspaceHero(
+                            userName: authProvider.user?.name ?? 'Operator',
+                            sshCount: sshHosts.length,
+                            mysqlCount: mysqlConnections.length,
+                            pendingSyncCount: hostProvider.pendingSyncCount,
+                            section: _section,
+                          ),
                         ),
-                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 120),
-                        children: [
+                        const SizedBox(height: 18),
+                        RevealOnMount(
+                          delay: const Duration(milliseconds: 100),
+                          child: _WorkspaceSectionSwitch(
+                            selected: _section,
+                            onSelected: (section) {
+                              setState(() {
+                                _section = section;
+                              });
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        if (_section == _WorkspaceSection.ssh) ...[
                           RevealOnMount(
-                            child: _WorkspaceHero(
-                              userName: authProvider.user?.name ?? 'Operator',
-                              sshCount: sshHosts.length,
-                              mysqlCount: mysqlConnections.length,
-                              pendingSyncCount: hostProvider.pendingSyncCount,
-                              section: _section,
+                            delay: const Duration(milliseconds: 120),
+                            child: _SectionLabel(
+                              title: 'SSH HOSTS',
+                              trailing: '${sshHosts.length} configured',
                             ),
                           ),
-                          const SizedBox(height: 18),
+                          const SizedBox(height: 12),
+                          if (sshHosts.isEmpty)
+                            RevealOnMount(
+                              delay: const Duration(milliseconds: 220),
+                              child: _EmptyState(
+                                icon: Icons.dns_rounded,
+                                title: 'No SSH hosts configured yet',
+                                description:
+                                    'Add your first environment to start opening remote terminal sessions from one clean workspace.',
+                                buttonLabel: 'Create SSH Host',
+                                onCreate: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          const AddEditHostScreen(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            )
+                          else
+                            ...List.generate(sshHosts.length, (index) {
+                              final host = sshHosts[index];
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 14),
+                                child: RevealOnMount(
+                                  delay: Duration(
+                                    milliseconds: 180 + (index * 70),
+                                  ),
+                                  child: _HostCard(
+                                    host: host,
+                                    hostProvider: hostProvider,
+                                    isPendingSync: hostProvider.isPendingSync(
+                                      host.id,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
+                        ] else ...[
                           RevealOnMount(
-                            delay: const Duration(milliseconds: 100),
-                            child: _WorkspaceSectionSwitch(
-                              selected: _section,
-                              onSelected: (section) {
-                                setState(() {
-                                  _section = section;
-                                });
-                              },
+                            delay: const Duration(milliseconds: 120),
+                            child: _SectionLabel(
+                              title: 'MYSQL CONNECTIONS',
+                              trailing: '${mysqlConnections.length} configured',
                             ),
                           ),
-                          const SizedBox(height: 20),
-                          if (_section == _WorkspaceSection.ssh) ...[
+                          const SizedBox(height: 12),
+                          if (mysqlConnections.isEmpty)
                             RevealOnMount(
-                              delay: const Duration(milliseconds: 120),
-                              child: _SectionLabel(
-                                title: 'SSH HOSTS',
-                                trailing: '${sshHosts.length} configured',
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            if (sshHosts.isEmpty)
-                              RevealOnMount(
-                                delay: const Duration(milliseconds: 220),
-                                child: _EmptyState(
-                                  icon: Icons.dns_rounded,
-                                  title: 'No SSH hosts configured yet',
-                                  description:
-                                      'Add your first environment to start opening remote terminal sessions from one clean workspace.',
-                                  buttonLabel: 'Create SSH Host',
-                                  onCreate: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            const AddEditHostScreen(),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              )
-                            else
-                              ...List.generate(sshHosts.length, (index) {
-                                final host = sshHosts[index];
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 14),
-                                  child: RevealOnMount(
-                                    delay: Duration(
-                                      milliseconds: 180 + (index * 70),
+                              delay: const Duration(milliseconds: 220),
+                              child: _EmptyState(
+                                icon: Icons.storage_rounded,
+                                title: 'No MySQL connections yet',
+                                description:
+                                    'Save a MySQL host to open a mobile workbench with database selection, query runner, and result export.',
+                                buttonLabel: 'Create MySQL Connection',
+                                onCreate: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          const AddEditMySqlScreen(),
                                     ),
-                                    child: _HostCard(
-                                      host: host,
-                                      hostProvider: hostProvider,
-                                      isPendingSync: hostProvider.isPendingSync(
-                                        host.id,
-                                      ),
+                                  );
+                                },
+                              ),
+                            )
+                          else ...[
+                            ...List.generate(mysqlConnections.length, (index) {
+                              final connection = mysqlConnections[index];
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 14),
+                                child: RevealOnMount(
+                                  delay: Duration(
+                                    milliseconds: 180 + (index * 70),
+                                  ),
+                                  child: _MySqlConnectionCard(
+                                    connection: connection,
+                                    hostProvider: hostProvider,
+                                    isPendingSync: hostProvider.isPendingSync(
+                                      connection.id,
                                     ),
                                   ),
-                                );
-                              }),
-                          ] else ...[
-                            RevealOnMount(
-                              delay: const Duration(milliseconds: 120),
-                              child: _SectionLabel(
-                                title: 'MYSQL CONNECTIONS',
-                                trailing:
-                                    '${mysqlConnections.length} configured',
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            if (mysqlConnections.isEmpty)
-                              RevealOnMount(
-                                delay: const Duration(milliseconds: 220),
-                                child: _EmptyState(
-                                  icon: Icons.storage_rounded,
-                                  title: 'No MySQL connections yet',
-                                  description:
-                                      'Save a MySQL host to open a mobile workbench with database selection, query runner, and result export.',
-                                  buttonLabel: 'Create MySQL Connection',
-                                  onCreate: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            const AddEditMySqlScreen(),
-                                      ),
-                                    );
-                                  },
                                 ),
-                              )
-                            else ...[
-                              RevealOnMount(
-                                delay: const Duration(milliseconds: 180),
-                                child: const _MySqlWorkbenchBanner(),
-                              ),
-                              const SizedBox(height: 14),
-                              ...List.generate(mysqlConnections.length, (
-                                index,
-                              ) {
-                                final connection = mysqlConnections[index];
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 14),
-                                  child: RevealOnMount(
-                                    delay: Duration(
-                                      milliseconds: 220 + (index * 70),
-                                    ),
-                                    child: _MySqlConnectionCard(
-                                      connection: connection,
-                                      hostProvider: hostProvider,
-                                      isPendingSync: hostProvider.isPendingSync(
-                                        connection.id,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }),
-                              RevealOnMount(
-                                delay: const Duration(milliseconds: 420),
-                                child: const _MySqlQuickActions(),
-                              ),
-                            ],
+                              );
+                            }),
                           ],
                         ],
-                      ),
+                      ],
                     ),
                   );
                 },
@@ -887,6 +856,7 @@ class _HostCard extends StatelessWidget {
     final primary = theme.colorScheme.primary;
 
     return Container(
+      constraints: const BoxConstraints(minHeight: 188),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         color: theme.cardColor.withValues(alpha: 0.88),
@@ -927,6 +897,8 @@ class _HostCard extends StatelessWidget {
                     const SizedBox(height: 6),
                     Text(
                       '${host.username}@${host.host}:${host.port}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurface.withValues(
                           alpha: 0.68,
@@ -934,24 +906,28 @@ class _HostCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _Tag(text: 'SSH', color: theme.colorScheme.primary),
-                        _Tag(
-                          text: isPendingSync ? 'Pending sync' : 'Synced',
-                          color: isPendingSync ? Colors.orange : Colors.green,
-                        ),
-                        _Tag(
-                          text: host.authType.label,
-                          color: theme.colorScheme.tertiary,
-                        ),
-                        _Tag(
-                          text: 'Port ${host.port}',
-                          color: theme.colorScheme.secondary,
-                        ),
-                      ],
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _Tag(text: 'SSH', color: theme.colorScheme.primary),
+                          const SizedBox(width: 8),
+                          _Tag(
+                            text: isPendingSync ? 'Pending sync' : 'Synced',
+                            color: isPendingSync ? Colors.orange : Colors.green,
+                          ),
+                          const SizedBox(width: 8),
+                          _Tag(
+                            text: host.authType.label,
+                            color: theme.colorScheme.tertiary,
+                          ),
+                          const SizedBox(width: 8),
+                          _Tag(
+                            text: 'Port ${host.port}',
+                            color: theme.colorScheme.secondary,
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -1026,59 +1002,6 @@ class _HostCard extends StatelessWidget {
   }
 }
 
-class _MySqlWorkbenchBanner extends StatelessWidget {
-  const _MySqlWorkbenchBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final primary = theme.colorScheme.primary;
-
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        color: theme.cardColor.withValues(alpha: 0.86),
-        border: Border.all(color: primary.withValues(alpha: 0.08)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(Icons.table_chart_rounded, color: primary),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Text(
-                  'MySQL workbench',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Text(
-            'Open saved database connections, switch databases, run basic queries, and export results without mixing the database workflow into SSH.',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-              height: 1.45,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _MySqlConnectionCard extends StatelessWidget {
   final HostModel connection;
   final HostProvider hostProvider;
@@ -1096,6 +1019,7 @@ class _MySqlConnectionCard extends StatelessWidget {
     final primary = theme.colorScheme.primary;
 
     return Container(
+      constraints: const BoxConstraints(minHeight: 188),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         color: theme.cardColor.withValues(alpha: 0.88),
@@ -1114,118 +1038,97 @@ class _MySqlConnectionCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(24),
         child: Padding(
           padding: const EdgeInsets.all(18),
-          child: Column(
+          child: Row(
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 58,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(18),
-                      gradient: LinearGradient(
-                        colors: [
-                          theme.colorScheme.secondary.withValues(alpha: 0.18),
-                          theme.colorScheme.tertiary.withValues(alpha: 0.12),
-                        ],
-                      ),
-                    ),
-                    child: Icon(
-                      Icons.storage_rounded,
-                      color: theme.colorScheme.secondary,
-                      size: 28,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          connection.displayName,
-                          style: theme.textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          '${connection.username}@${connection.host}:${connection.port}',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurface.withValues(
-                              alpha: 0.68,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _StatusPill(
-                        label: isPendingSync ? 'Pending sync' : 'Synced',
-                        online: !isPendingSync,
-                      ),
-                      PopupMenuButton<String>(
-                        icon: Icon(
-                          Icons.more_horiz_rounded,
-                          color: theme.colorScheme.onSurface.withValues(
-                            alpha: 0.58,
-                          ),
-                        ),
-                        onSelected: (value) {
-                          if (value == 'edit') {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) =>
-                                    AddEditMySqlScreen(connection: connection),
-                              ),
-                            );
-                          } else if (value == 'delete') {
-                            _confirmDelete(context, hostProvider, connection);
-                          }
-                        },
-                        itemBuilder: (context) => const [
-                          PopupMenuItem(value: 'edit', child: Text('Edit')),
-                          PopupMenuItem(value: 'delete', child: Text('Delete')),
-                        ],
-                      ),
+              Container(
+                width: 58,
+                height: 58,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  gradient: LinearGradient(
+                    colors: [
+                      theme.colorScheme.secondary.withValues(alpha: 0.18),
+                      theme.colorScheme.tertiary.withValues(alpha: 0.12),
                     ],
                   ),
-                ],
+                ),
+                child: Icon(
+                  Icons.storage_rounded,
+                  color: theme.colorScheme.secondary,
+                  size: 28,
+                ),
               ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: _InfoTile(
-                      label: 'Default DB',
-                      value: connection.databaseName ?? 'Not set',
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      connection.displayName,
+                      style: theme.textTheme.titleMedium,
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _InfoTile(
-                      label: 'Auth',
-                      value: connection.authType.label,
+                    const SizedBox(height: 6),
+                    Text(
+                      '${connection.username}@${connection.host}:${connection.port}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.68,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _Tag(
+                            text: 'MySQL',
+                            color: theme.colorScheme.secondary,
+                          ),
+                          const SizedBox(width: 8),
+                          _Tag(
+                            text: isPendingSync ? 'Pending sync' : 'Synced',
+                            color: isPendingSync ? Colors.orange : Colors.green,
+                          ),
+                          const SizedBox(width: 8),
+                          _Tag(
+                            text: connection.authType.label,
+                            color: theme.colorScheme.tertiary,
+                          ),
+                          const SizedBox(width: 8),
+                          _Tag(
+                            text: 'Port ${connection.port}',
+                            color: theme.colorScheme.primary,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _Tag(text: 'MySQL', color: theme.colorScheme.secondary),
-                  _Tag(
-                    text: isPendingSync ? 'Pending sync' : 'Synced',
-                    color: isPendingSync ? Colors.orange : Colors.green,
-                  ),
-                  _Tag(
-                    text: 'Port ${connection.port}',
-                    color: theme.colorScheme.primary,
-                  ),
-                  _Tag(text: 'Saved', color: theme.colorScheme.tertiary),
+              PopupMenuButton<String>(
+                icon: Icon(
+                  Icons.more_horiz_rounded,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.58),
+                ),
+                onSelected: (value) {
+                  if (value == 'edit') {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            AddEditMySqlScreen(connection: connection),
+                      ),
+                    );
+                  } else if (value == 'delete') {
+                    _confirmDelete(context, hostProvider, connection);
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'edit', child: Text('Edit')),
+                  PopupMenuItem(value: 'delete', child: Text('Delete')),
                 ],
               ),
             ],
@@ -1278,114 +1181,6 @@ class _MySqlConnectionCard extends StatelessWidget {
   }
 }
 
-class _MySqlQuickActions extends StatelessWidget {
-  const _MySqlQuickActions();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        color: theme.cardColor.withValues(alpha: 0.88),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Quick actions',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 14),
-          const Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _QuickActionChip(
-                icon: Icons.play_arrow_rounded,
-                label: 'Run Query',
-              ),
-              _QuickActionChip(
-                icon: Icons.list_alt_rounded,
-                label: 'Show Tables',
-              ),
-              _QuickActionChip(
-                icon: Icons.file_upload_rounded,
-                label: 'Import SQL',
-              ),
-              _QuickActionChip(
-                icon: Icons.file_download_rounded,
-                label: 'Export CSV',
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InfoTile extends StatelessWidget {
-  final String label;
-  final String value;
-
-  const _InfoTile({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.56),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(value, style: theme.textTheme.titleSmall),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatusPill extends StatelessWidget {
-  final String label;
-  final bool online;
-
-  const _StatusPill({required this.label, required this.online});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = online ? Colors.green : Colors.orange;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color),
-      ),
-    );
-  }
-}
-
 class _SyncIndicator extends StatelessWidget {
   final int pendingCount;
 
@@ -1411,39 +1206,6 @@ class _SyncIndicator extends StatelessWidget {
           color: color,
           fontWeight: FontWeight.w700,
         ),
-      ),
-    );
-  }
-}
-
-class _QuickActionChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-
-  const _QuickActionChip({required this.icon, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: theme.colorScheme.primary),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: theme.colorScheme.primary,
-            ),
-          ),
-        ],
       ),
     );
   }
